@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>المشغل الفضي الفاخر - Media Session + إيماءات + قائمة متكاملة</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="stars-background" id="starsBackground"></div>
+    <div class="light-effects">
+        <div class="light-spot"></div>
+        <div class="light-spot"></div>
+        <div class="light-spot"></div>
+    </div>
+    <div class="drop-overlay" id="dropOverlay"><div class="drop-message">🎵 أسقط الملفات هنا</div></div>
+    <div class="loading-overlay" id="loadingOverlay"><div class="loading-spinner"></div></div>
+
+    <!-- ========== شريط علوي موحد ========== -->
+    <div class="top-bar">
+        <button class="burger-menu-btn" id="burgerMenuBtn" title="القائمة">☰</button>
+        <div class="quick-actions-row" id="quickActionsRow">
+            <button class="quick-action-chip" id="cameraToggleChip" title="دوران الكاميرا">🎥</button>
+            <button class="quick-action-chip" id="palaceToggleChip" title="معالج القصر">🏰</button>
+            <button class="quick-action-chip" id="boostChip" title="تضخيم">⚡</button>
+            <button class="quick-action-chip" id="powerSaveChip" title="توفير الطاقة">🔋</button>
+            <button class="quick-action-chip" id="advancedToggleChip" title="لوحة التحكم">🎛️</button>
+            <button class="quick-action-chip" id="infoChip" title="معلومات">ℹ️</button>
+        </div>
+    </div>
+
+    <!-- القائمة المنسدلة -->
+    <div class="burger-dropdown" id="burgerDropdown">
+        <div class="dropdown-item" data-action="camera">🎥 دوران الكاميرا</div>
+        <div class="dropdown-item" data-action="palace">🏰 معالج القصر</div>
+        <div class="dropdown-item" data-action="boost">⚡ تضخيم</div>
+        <div class="dropdown-item" data-action="powersave">🔋 توفير الطاقة</div>
+        <div class="dropdown-item" data-action="advanced">🎛️ لوحة التحكم</div>
+        <div class="dropdown-item" data-action="info">ℹ️ شرح الوظائف</div>
+        <div class="dropdown-item" data-action="shortcuts">⌨️ اختصارات</div>
+    </div>
+
+    <!-- ========== أيقونات عائمة سفلية ========== -->
+    <div class="floating-actions">
+        <button class="fab-btn" id="shortcutsFab" title="اختصارات لوحة المفاتيح">⌨️</button>
+        <button class="fab-btn" id="fullscreenFab" title="ملء الشاشة">⛶</button>
+    </div>
+
+    <!-- مودال الاختصارات -->
+    <div class="modal-overlay" id="shortcutsModal">
+        <div class="modal-content">
+            <h3>⌨️ اختصارات لوحة المفاتيح</h3>
+            <div class="shortcut-item"><span>تشغيل/إيقاف</span><span class="shortcut-key">مسافة</span></div>
+            <div class="shortcut-item"><span>التالي / السابق</span><span class="shortcut-key">→ / ←</span></div>
+            <div class="shortcut-item"><span>رفع/خفض الصوت</span><span class="shortcut-key">↑ / ↓</span></div>
+            <div class="shortcut-item"><span>تكرار / عشوائي</span><span class="shortcut-key">R / S</span></div>
+            <div class="shortcut-item"><span>تضخيم</span><span class="shortcut-key">B</span></div>
+            <div class="shortcut-item"><span>دوران الكاميرا</span><span class="shortcut-key">C</span></div>
+            <div class="shortcut-item"><span>توفير الطاقة</span><span class="shortcut-key">P</span></div>
+            <div class="shortcut-item"><span>القصر الصوتي</span><span class="shortcut-key">T</span></div>
+            <div class="shortcut-item"><span>إظهار/إخفاء اللوحة</span><span class="shortcut-key">H</span></div>
+            <div class="shortcut-item"><span>👆 إيماءة: السحب لليسار</span><span class="shortcut-key">الأغنية التالية</span></div>
+            <div class="shortcut-item"><span>👆 إيماءة: السحب لليمين</span><span class="shortcut-key">الأغنية السابقة</span></div>
+            <button id="closeShortcutsModal" style="margin-top:15px;background:#2A2A38;border:none;padding:8px 20px;border-radius:30px;color:white;cursor:pointer;width:100%;">إغلاق</button>
+        </div>
+    </div>
+
+    <!-- مودال المعلومات -->
+    <div class="modal-overlay" id="infoModal">
+        <div class="modal-content">
+            <h2 style="color:#E8E8F2;text-align:center;margin-bottom:15px;">📖 شرح الوظائف المتقدمة</h2>
+            <div class="info-section-title">⚡ تضخيم (Boost)</div>
+            <div class="info-item"><span>يضاعف مستوى الصوت الإجمالي حتى 1.8x.</span><span class="info-badge">مفتاح B</span></div>
+            <div class="info-section-title">🔋 توفير الطاقة</div>
+            <div class="info-item"><span>يعطل المؤثرات البصرية لتقليل استهلاك CPU/GPU.</span><span class="info-badge">مفتاح P</span></div>
+            <div class="info-section-title">🏰 معالج القصر</div>
+            <div class="info-item"><span>يُضيف تأثير صدى (Reverb) عميق يحاكي القاعات الكبيرة.</span><span class="info-badge">مفتاح T</span></div>
+            <div class="info-section-title">👆 إيماءات اللمس</div>
+            <div class="info-item"><span>اسحب لليسار على المشغل = الأغنية التالية | اسحب لليمين = الأغنية السابقة.</span><span class="info-badge">سحب</span></div>
+            <div class="info-section-title">📋 قائمة التشغيل</div>
+            <div class="info-item"><span>يمكنك حذف أغنية منفردة (×)، إعادة ترتيبها بالسحب، مسح الكل، تصدير/استيراد القائمة.</span><span class="info-badge">محسّنة</span></div>
+            <div class="info-section-title">📱 Media Session</div>
+            <div class="info-item"><span>يظهر عنوان الأغنية والفنان والغلاف وأزرار التحكم في شاشة القفل والإشعارات.</span><span class="info-badge">حديث</span></div>
+            <button id="closeInfoModal" style="margin-top:20px;background:#2A2A38;border:none;padding:10px 20px;border-radius:40px;color:white;cursor:pointer;width:100%;">إغلاق</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="player-section" id="playerSection">
+            <div class="music-player" id="musicPlayerContainer">
+                <div class="player-header"><h1>المشغل الفضي الفاخر</h1><p>Media Session | إيماءات | قائمة متكاملة</p></div>
+                <div class="album-art-container" id="albumArtContainer"><img id="albumImage" class="album-art" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E"></div>
+                <label for="imageInput" class="image-label">🖼️ اختر صورة غلاف</label>
+                <input type="file" id="imageInput" class="image-input" accept="image/*">
+                <div class="song-info"><h2 class="song-title" id="songTitle">🎵 أضف موسيقى</h2><p class="song-artist" id="songArtist">فنان فضي</p></div>
+                <div class="visualizer-container"><div class="visualizer" id="visualizer"></div></div>
+                <div class="progress-area">
+                    <div class="waveform-container" id="waveformContainer">
+                        <div class="waveform-click-target" id="waveformClickTarget"></div>
+                        <canvas id="waveformCanvas"></canvas>
+                    </div>
+                    <div class="timer"><span id="currentTime">0:00</span><span id="duration">0:00</span></div>
+                </div>
+                <div class="controls">
+                    <button class="control-btn repeat-btn" id="repeatBtn">🔁</button>
+                    <button class="control-btn prev-btn" id="prevBtn">⏮️</button>
+                    <button class="control-btn play-pause" id="playPauseBtn">▶️</button>
+                    <button class="control-btn next-btn" id="nextBtn">⏭️</button>
+                    <button class="control-btn shuffle-btn" id="shuffleBtn">🔀</button>
+                </div>
+                <div class="volume-control"><i>🔊</i>
+                    <div class="volume-slider" id="volumeSlider">
+                        <div class="volume-slider-inner"><div class="volume-progress" id="volumeProgress"></div></div>
+                    </div>
+                </div>
+                <label for="fileInput" class="file-label">📁 اختر ملفات الموسيقى</label>
+                <input type="file" id="fileInput" class="file-input" accept="audio/*,.mp3,.wav,.ogg,.aac,.flac,.m4a" multiple>
+
+                <!-- قائمة التشغيل -->
+                <div class="playlist-section">
+                    <div class="playlist-header">
+                        <span>📋 قائمة التشغيل (<span id="playlistCount">0</span>)</span>
+                        <div class="playlist-actions">
+                            <button class="playlist-action-btn" id="exportPlaylistBtn">💾 تصدير</button>
+                            <button class="playlist-action-btn" id="importPlaylistBtn">📥 استيراد</button>
+                            <input type="file" id="importPlaylistInput" class="file-input" accept=".json">
+                            <button class="playlist-action-btn danger" id="clearPlaylistBtn">🗑 مسح الكل</button>
+                        </div>
+                    </div>
+                    <div class="playlist" id="playlist">
+                        <div class="playlist-empty">🎵 لا توجد أغانٍ - أضف ملفات موسيقية</div>
+                    </div>
+                </div>
+
+                <!-- قسم SRT -->
+                <div class="srt-section">
+                    <label for="srtInput" class="file-label" style="margin:0 0 6px 0;">✨ رفع SRT أو LRC (كلمات متزامنة)</label>
+                    <input type="file" id="srtInput" class="file-input" accept=".srt,.lrc,.txt">
+                    <div class="lyrics-stage" id="lyricsStage">
+                        <div id="lyricsWord" class="dynamic-word">🎤 ارفع SRT/LRC</div>
+                        <div id="stageContainer" class="stage-container">
+                            <div id="prevWord" class="stage-word prev"></div>
+                            <div id="currentWord" class="stage-word current"></div>
+                            <div id="nextWord" class="stage-word next"></div>
+                        </div>
+                    </div>
+                    <div class="srt-actions">
+                        <button id="clearSrtBtn" class="srt-clear-btn">🗑 مسح الترجمة</button>
+                        <button id="toggleModeBtn" class="toggle-mode-btn">🔁 وضع: كلمة</button>
+                    </div>
+                    <div class="srt-status" id="srtStatusMsg">⚡ يدعم SRT و LRC | الوضع: كلمة</div>
+                </div>
+                <div class="developer-note">💡 Media Session نشط | 👆 اسحب لليسار/اليمين لتغيير الأغنية | 🖱️ اسحب الملفات وأفلتها</div>
+            </div>
+        </div>
+
+        <div class="advanced-section" id="advancedSection">
+            <div class="advanced-controls">
+                <h3>🎛️ التحكم الصوتي المتقدم</h3>
+                <div class="palace-effect-controls" id="palaceEffectControls" style="display:none;">
+                    <h4>🏰 معالج القصر الصوتي</h4>
+                    <div class="palace-note" style="font-size:11px;color:#B0B0C0;">✨ القصر يضاعف تأثير الصدى العام</div>
+                    <div><label>شدة القصر <span id="palaceSizeValue">50%</span></label>
+                        <input type="range" class="palace-slider" id="palaceSize" min="0" max="100" value="50">
+                    </div>
+                    <div style="margin-top:8px;">
+                        <button class="palace-btn" id="applyPalaceEffect">تطبيق</button>
+                        <button class="palace-btn" id="resetPalaceEffect">إعادة تعيين</button>
+                    </div>
+                    <div id="palaceStatus" style="font-size:11px;color:#C0C0E0;margin-top:6px;"></div>
+                </div>
+                <div class="audio-enhancement-controls">
+                    <h4>نظام تضخيم الصوت</h4>
+                    <div>الصوت الأساسي <span id="volumeValue">70%</span></div>
+                    <input type="range" class="enhancement-slider" id="volumeEnhancementSlider" min="0" max="100" value="70">
+                    <div>تضخيم (Boost) <span id="boostIndicator">x1.0</span></div>
+                    <input type="range" id="boostEnhancementSlider" min="0" max="100" value="0">
+                    <div>تعزيز الجهير <span id="bassValue">0%</span></div>
+                    <input type="range" id="bassEnhancementSlider" min="0" max="100" value="0">
+                </div>
+                <div class="eq-container">
+                    <h4>المعادل الاحترافي</h4>
+                    <div class="eq-bands-container" id="eqBands"></div>
+                    <div class="preset-buttons" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                        <button class="preset-btn active" data-preset="flat">مسطح</button>
+                        <button class="preset-btn" data-preset="bass">جهير</button>
+                        <button class="preset-btn" data-preset="vocal">صوتي</button>
+                        <button class="preset-btn" data-preset="rock">روك</button>
+                        <button class="preset-btn" data-preset="electronic">إلكتروني</button>
+                    </div>
+                </div>
+                <div class="analysis-panel">
+                    <h4 style="text-align:center;">📊 طيف فضّي</h4>
+                    <div class="spectrum-display"><canvas id="spectrumCanvas"></canvas></div>
+                </div>
+                <div class="advanced-settings">
+                    <div><h5>سرعة التشغيل</h5><input type="range" id="playbackSpeed" min="50" max="200" value="100"><span id="speedValue">100%</span></div>
+                    <div><h5>الصدى (Reverb)</h5><input type="range" id="reverb" min="0" max="100" value="30"><span id="reverbValue">30%</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
