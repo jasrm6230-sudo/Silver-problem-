@@ -128,13 +128,13 @@
     let waveDrawAnimationId = null;
     let waveformLoopActive = false;
 
-    // ========== نظام الاستئناف التلقائي ==========
-    let autoResumeEnabled = true;    // مفعل دائمًا
-    let userPaused = false;         // هل المستخدم أوقف التشغيل؟
+    // ========== نظام الاستئناف التلقائي (مُعدَّل) ==========
+    let autoResumeEnabled = true;
+    let userPaused = false;
     let resumeTimeout = null;
     let resumeAttempts = 0;
-    const MAX_RESUME_ATTEMPTS = 20; // 20 محاولة × 2 ثانية = 40 ثانية
-    const RESUME_INTERVAL = 2000;   // محاولة كل ثانيتين
+    const MAX_RESUME_ATTEMPTS = 3;   // 3 محاولات فقط
+    const RESUME_INTERVAL = 10000;   // 10 ثوانٍ بين كل محاولة
 
     const songLyricsMap = new Map();
     let allObjectURLs = [];
@@ -299,7 +299,7 @@
     // ========== دوال الاستئناف التلقائي ==========
     function startAutoResume() {
         if (!autoResumeEnabled || !isPlaying || !songs.length) return;
-        stopAutoResume(); // إيقاف أي محاولة سابقة
+        stopAutoResume();
         resumeAttempts = 0;
         attemptResume();
     }
@@ -312,11 +312,9 @@
         }
         resumeAttempts++;
         resumeTimeout = setTimeout(async () => {
-            // نتأكد أن التوقف ما زال خارجيًا ولم يتدخل المستخدم
             if (!userPaused && autoResumeEnabled && songs.length && audio.paused) {
                 try {
                     await audio.play();
-                    // نجح الاستئناف
                     isPlaying = true;
                     playPauseBtn.innerHTML = '⏸️';
                     startAlbumRotation();
@@ -329,7 +327,6 @@
                     showToast('🔄 تم استئناف الموسيقى تلقائياً');
                     console.log("✅ تم استئناف التشغيل بعد " + resumeAttempts + " محاولة");
                 } catch (e) {
-                    // ما زال لا يمكن التشغيل، نواصل المحاولة
                     console.log("⏳ محاولة " + resumeAttempts + " فشلت، إعادة المحاولة...");
                     attemptResume();
                 }
@@ -687,8 +684,8 @@
         allObjectURLs = allObjectURLs.filter(u => u === currentSrc);
         songLyricsMap.clear();
         songs = []; currentIndex = 0;
-        userPaused = true;           // ✅ منع الاستئناف التلقائي بعد المسح
-        stopAutoResume();            // ✅ إيقاف أي محاولة استئناف
+        userPaused = true;
+        stopAutoResume();
         audio.pause();
         isPlaying = false; playPauseBtn.innerHTML = '▶️';
         stopAlbumRotation(); enableSlow3D(false); stopVisualizerLoop(); stopSpectrumLoop(); stopWaveformProgress();
@@ -898,8 +895,8 @@
         if (!songs.length) { alert("أضف أغاني أولا"); return; }
         if (!isAudioInitialized) await initAudioContext();
         if (isPlaying) {
-            userPaused = true;   // ✅ المستخدم أوقف التشغيل يدويًا
-            stopAutoResume();    // ✅ إيقاف أي محاولة استئناف جارية
+            userPaused = true;
+            stopAutoResume();
             audio.pause();
             playPauseBtn.innerHTML = '▶️';
             stopAlbumRotation();
@@ -908,7 +905,7 @@
             stopSpectrumLoop();
             stopWaveformProgress();
         } else {
-            userPaused = false;  // ✅ المستخدم يطلب التشغيل
+            userPaused = false;
             if (audioContext && audioContext.state === 'suspended') await audioContext.resume();
             audio.play();
             playPauseBtn.innerHTML = '⏸️';
@@ -924,15 +921,15 @@
 
     audio.addEventListener('ended', () => { if (isRepeating) { audio.currentTime = 0; audio.play(); } else playNext(); });
 
-    // ✅ مستمع التوقف - يكتشف التوقف الخارجي (إعلانات، مكالمات، إلخ)
+    // ✅ مستمع التوقف - يكتشف التوقف الخارجي
     audio.addEventListener('pause', () => {
         if (!userPaused && autoResumeEnabled && isPlaying && songs.length) {
-            console.log("🔍 تم اكتشاف توقف خارجي (قد يكون إعلاناً)، بدء محاولة الاستئناف...");
+            console.log("🔍 تم اكتشاف توقف خارجي، بدء محاولة الاستئناف...");
             startAutoResume();
         }
     });
 
-    // ✅ مستمع التشغيل - يعيد تعيين علامة التوقف اليدوي
+    // ✅ مستمع التشغيل
     audio.addEventListener('play', () => {
         userPaused = false;
         stopAutoResume();
