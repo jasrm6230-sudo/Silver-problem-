@@ -127,6 +127,15 @@
     let spectrumAnimId = null;
     let waveDrawAnimationId = null;
     let waveformLoopActive = false;
+
+    // ========== نظام الاستئناف التلقائي ==========
+    let autoResumeEnabled = true;    // مفعل دائمًا
+    let userPaused = false;         // هل المستخدم أوقف التشغيل؟
+    let resumeTimeout = null;
+    let resumeAttempts = 0;
+    const MAX_RESUME_ATTEMPTS = 20; // 20 محاولة × 2 ثانية = 40 ثانية
+    const RESUME_INTERVAL = 2000;   // محاولة كل ثانيتين
+
     const songLyricsMap = new Map();
     let allObjectURLs = [];
     let srtCues = [];
@@ -285,6 +294,57 @@
     function stopWaveformProgress() {
         waveformLoopActive = false;
         if (waveDrawAnimationId) { cancelAnimationFrame(waveDrawAnimationId); waveDrawAnimationId = null; }
+    }
+
+    // ========== دوال الاستئناف التلقائي ==========
+    function startAutoResume() {
+        if (!autoResumeEnabled || !isPlaying || !songs.length) return;
+        stopAutoResume(); // إيقاف أي محاولة سابقة
+        resumeAttempts = 0;
+        attemptResume();
+    }
+
+    function attemptResume() {
+        if (resumeAttempts >= MAX_RESUME_ATTEMPTS) {
+            stopAutoResume();
+            console.log("⏹️ توقفت محاولات الاستئناف بعد " + MAX_RESUME_ATTEMPTS + " محاولة");
+            return;
+        }
+        resumeAttempts++;
+        resumeTimeout = setTimeout(async () => {
+            // نتأكد أن التوقف ما زال خارجيًا ولم يتدخل المستخدم
+            if (!userPaused && autoResumeEnabled && songs.length && audio.paused) {
+                try {
+                    await audio.play();
+                    // نجح الاستئناف
+                    isPlaying = true;
+                    playPauseBtn.innerHTML = '⏸️';
+                    startAlbumRotation();
+                    enableSlow3D(true);
+                    startVisualizerLoop();
+                    startSpectrumLoop();
+                    startWaveformProgress();
+                    updateMediaSession();
+                    stopAutoResume();
+                    showToast('🔄 تم استئناف الموسيقى تلقائياً');
+                    console.log("✅ تم استئناف التشغيل بعد " + resumeAttempts + " محاولة");
+                } catch (e) {
+                    // ما زال لا يمكن التشغيل، نواصل المحاولة
+                    console.log("⏳ محاولة " + resumeAttempts + " فشلت، إعادة المحاولة...");
+                    attemptResume();
+                }
+            } else {
+                stopAutoResume();
+            }
+        }, RESUME_INTERVAL);
+    }
+
+    function stopAutoResume() {
+        if (resumeTimeout) {
+            clearTimeout(resumeTimeout);
+            resumeTimeout = null;
+        }
+        resumeAttempts = 0;
     }
 
     function handleWaveformSeek(clientX) {
@@ -626,7 +686,11 @@
         for (let song of songs) { if (song.src && song.src !== currentSrc && allObjectURLs.includes(song.src)) { URL.revokeObjectURL(song.src); } }
         allObjectURLs = allObjectURLs.filter(u => u === currentSrc);
         songLyricsMap.clear();
-        songs = []; currentIndex = 0; audio.src = ''; audio.pause(); isPlaying = false; playPauseBtn.innerHTML = '▶️';
+        songs = []; currentIndex = 0;
+        userPaused = true;           // ✅ منع الاستئناف التلقائي بعد المسح
+        stopAutoResume();            // ✅ إيقاف أي محاولة استئناف
+        audio.pause();
+        isPlaying = false; playPauseBtn.innerHTML = '▶️';
         stopAlbumRotation(); enableSlow3D(false); stopVisualizerLoop(); stopSpectrumLoop(); stopWaveformProgress();
         songTitleSpan.textContent = '🎵 أضف موسيقى'; songArtistSpan.textContent = 'فنان فضي';
         waveformData = null; srtCues = []; wordTimeline = [];
@@ -834,15 +898,45 @@
         if (!songs.length) { alert("أضف أغاني أولا"); return; }
         if (!isAudioInitialized) await initAudioContext();
         if (isPlaying) {
-            audio.pause(); playPauseBtn.innerHTML = '▶️'; stopAlbumRotation(); enableSlow3D(false); stopVisualizerLoop(); stopSpectrumLoop(); stopWaveformProgress();
+            userPaused = true;   // ✅ المستخدم أوقف التشغيل يدويًا
+            stopAutoResume();    // ✅ إيقاف أي محاولة استئناف جارية
+            audio.pause();
+            playPauseBtn.innerHTML = '▶️';
+            stopAlbumRotation();
+            enableSlow3D(false);
+            stopVisualizerLoop();
+            stopSpectrumLoop();
+            stopWaveformProgress();
         } else {
+            userPaused = false;  // ✅ المستخدم يطلب التشغيل
             if (audioContext && audioContext.state === 'suspended') await audioContext.resume();
-            audio.play(); playPauseBtn.innerHTML = '⏸️'; startAlbumRotation(); enableSlow3D(true); startVisualizerLoop(); startSpectrumLoop(); startWaveformProgress();
+            audio.play();
+            playPauseBtn.innerHTML = '⏸️';
+            startAlbumRotation();
+            enableSlow3D(true);
+            startVisualizerLoop();
+            startSpectrumLoop();
+            startWaveformProgress();
         }
         isPlaying = !isPlaying;
         updateMediaSession();
     };
+
     audio.addEventListener('ended', () => { if (isRepeating) { audio.currentTime = 0; audio.play(); } else playNext(); });
+
+    // ✅ مستمع التوقف - يكتشف التوقف الخارجي (إعلانات، مكالمات، إلخ)
+    audio.addEventListener('pause', () => {
+        if (!userPaused && autoResumeEnabled && isPlaying && songs.length) {
+            console.log("🔍 تم اكتشاف توقف خارجي (قد يكون إعلاناً)، بدء محاولة الاستئناف...");
+            startAutoResume();
+        }
+    });
+
+    // ✅ مستمع التشغيل - يعيد تعيين علامة التوقف اليدوي
+    audio.addEventListener('play', () => {
+        userPaused = false;
+        stopAutoResume();
+    });
 
     volumeSlider.addEventListener('click', (e) => {
         let vol = Math.min(1, Math.max(0, e.offsetX / volumeSlider.clientWidth));
