@@ -1,129 +1,1697 @@
 (function() {
-function parseTime(e) { let t = e.trim().replace(",", ".").split(":"); return 3 === t.length ? 3600 * parseFloat(t[0]) + 60 * parseFloat(t[1]) + parseFloat(t[2]) : 2 === t.length ? 60 * parseFloat(t[0]) + parseFloat(t[1]) : parseFloat(t[0]) }
-function parseLRC(e) { let t = e.split(/\r?\n/), n = [], r = /\[(\d{2}):(\d{2})(?:[\.:](\d{1,3}))?\]/g; for (let o of t) { let t, i = []; for (; null !== (t = r.exec(o)); ) { let e = 60 * parseInt(t[1], 10) + parseInt(t[2], 10) + (t[3] ? parseInt(t[3], 10) / 100 : 0); i.push(e) } let s = o.replace(r, "").trim(); if (0 !== i.length && "" !== s) for (let e of i) n.push({ time: e, text: s }) } return n.sort((e, t) => e.time - t.time), n }
-function convertLRCtoSRTlike(e, t = 300) { let n = []; for (let r = 0; r < e.length; r++) { let o = e[r].time, i = r + 1 < e.length ? e[r + 1].time : t; n.push({ start: o, end: i, text: e[r].text }) } return n }
-function loadLyricsData(e, t, n) { let r = t.toLowerCase(); if (r.endsWith(".lrc") || r.endsWith(".txt")) { let r = parseLRC(e); if (0 === r.length) return !1; let o = convertLRCtoSRTlike(r, n); return { cues: o, words: parseSRTtoWords(o), content: e, fileName: t } } { let r = e.split(/\r?\n\r?\n/), o = []; for (let i of r) { let r = i.split(/\r?\n/); if (r.length < 2) continue; let s = r[1]; if (!s.includes("-->")) continue; let a = s.split("-->"); if (2 !== a.length) continue; let l = parseTime(a[0]), c = parseTime(a[1]), d = r.slice(2).join(" ").replace(/<[^>]*>/g, "").trim(); d && o.push({ start: l, end: c, text: d }) } return 0 !== o.length ? { cues: o, words: parseSRTtoWords(o), content: e, fileName: t } : !1 } }
-function parseSRTtoWords(e) { let t = []; for (let n of e) { let e = n.text.split(/\s+/); if (0 !== e.length) { let r = (n.end - n.start) / e.length; for (let o = 0; o < e.length; o++) { let i = e[o].replace(/[،,.;؟!]/g, ""); i.length && t.push({ time: n.start + o * r, word: i }) } } } return t.sort((e, t) => e.time - t.time), t }
-function formatTime(e) { if (isNaN(e)) return "0:00"; let t = Math.floor(e / 60), n = Math.floor(e % 60); return t + ":" + (n < 10 ? "0" : "") + n }
-function showToast(e) { let t = document.querySelector(".toast"); t && t.remove(); let n = document.createElement("div"); n.className = "toast", n.textContent = e, document.body.appendChild(n), setTimeout(() => n.remove(), 2500) }
-const audio = new Audio;
-let songs = [], currentIndex = 0, isPlaying = !1, isRepeating = !1, isShuffling = !1, isCameraRotating = !1, rotationAngle = 0, cameraId = null,
-    audioContext, source, gainNode, analyser, filters = [], isAudioInitialized = !1, volumeEnhance = .7, boostLevel = 1, bassLevelVal = 0,
-    wetGain = null, dryGain = null, mixGain = null, convolverNode = null, reverbSliderValue = .3, palaceEnabled = !1, visualizerBars = [],
-    visualizerAnimId = null, spectrumAnimId = null, waveDrawAnimationId = null, waveformLoopActive = !1, autoResumeEnabled = !0, userPaused = !1,
-    resumeTimeout = null, resumeAttempts = 0;
-const MAX_RESUME_ATTEMPTS = 3, RESUME_INTERVAL = 1e4, songLyricsMap = new Map;
-let allObjectURLs = [], srtCues = [], wordTimeline = [], rawLyricsContent = null, rawLyricsFileName = null, currentMode = "word",
-    lastStageIndex = -1, stageTransitionTimeout = null;
+// ========== دوال مساعدة ==========
+function parseTime(e) {
+    let t = e.trim().replace(",", ".").split(":");
+    return 3 === t.length ? 3600 * parseFloat(t[0]) + 60 * parseFloat(t[1]) + parseFloat(t[2])
+         : 2 === t.length ? 60 * parseFloat(t[0]) + parseFloat(t[1])
+         : parseFloat(t[0]);
+}
 
-function updateMediaSession() { if ("mediaSession" in navigator) { let e = songs[currentIndex]; e ? (navigator.mediaSession.metadata = new MediaMetadata({ title: e.title || "أغنية غير معروفة", artist: e.artist || "فنان فضي", album: "المشغل الفضي", artwork: [{ src: e.cover || "", sizes: "200x200", type: "image/png" }] }), navigator.mediaSession.setActionHandler("play", () => { isPlaying || playPauseBtn.click() }), navigator.mediaSession.setActionHandler("pause", () => { isPlaying && playPauseBtn.click() }), navigator.mediaSession.setActionHandler("previoustrack", () => prevBtn.click()), navigator.mediaSession.setActionHandler("nexttrack", () => nextBtn.click())) : navigator.mediaSession.metadata = null } }
-const playPauseBtn = document.getElementById("playPauseBtn"), prevBtn = document.getElementById("prevBtn"), nextBtn = document.getElementById("nextBtn"),
-    repeatBtn = document.getElementById("repeatBtn"), shuffleBtn = document.getElementById("shuffleBtn"), currentTimeSpan = document.getElementById("currentTime"),
-    durationSpan = document.getElementById("duration"), volumeSlider = document.getElementById("volumeSlider"), volumeProgress = document.getElementById("volumeProgress"),
-    fileInput = document.getElementById("fileInput"), playlistDiv = document.getElementById("playlist"), songTitleSpan = document.getElementById("songTitle"),
-    songArtistSpan = document.getElementById("songArtist"), albumImage = document.getElementById("albumImage"), albumContainer = document.getElementById("albumArtContainer"),
-    loadingOverlay = document.getElementById("loadingOverlay"), lyricsWordDiv = document.getElementById("lyricsWord"),
-    stageContainer = document.getElementById("stageContainer"), prevWordDiv = document.getElementById("prevWord"), currentWordDiv = document.getElementById("currentWord"),
-    nextWordDiv = document.getElementById("nextWord"), srtInput = document.getElementById("srtInput"), clearSrtBtn = document.getElementById("clearSrtBtn"),
-    toggleModeBtn = document.getElementById("toggleModeBtn"), srtStatusMsg = document.getElementById("srtStatusMsg"),
-    waveformCanvas = document.getElementById("waveformCanvas"), waveformContainer = document.getElementById("waveformContainer"),
-    waveformClickTarget = document.getElementById("waveformClickTarget"), visualizerDiv = document.getElementById("visualizer"),
-    spectrumCanvas = document.getElementById("spectrumCanvas"), ctx = spectrumCanvas.getContext("2d"),
-    advancedSection = document.getElementById("advancedSection"), advancedToggleChip = document.getElementById("advancedToggleChip"),
-    palaceControls = document.getElementById("palaceEffectControls"), playerSection = document.getElementById("playerSection"),
-    dropOverlay = document.getElementById("dropOverlay"), burgerMenuBtn = document.getElementById("burgerMenuBtn"),
-    burgerDropdown = document.getElementById("burgerDropdown"), playlistCountSpan = document.getElementById("playlistCount");
-let waveformCtx = waveformCanvas.getContext("2d"), waveformData = null, advancedPanelVisible = !0;
+/**
+ * تحليل ملف LRC مع دعم تنسيقات متعددة:
+ * [mm:ss.xx] أو [mm:ss:xx] أو [mm:ss.xxx]
+ * مع إعادة تعيين lastIndex لكل سطر (الإصلاح الأساسي)
+ */
+function parseLRC(e) {
+    let lines = e.split(/\r?\n/);
+    let entries = [];
+    // تعريف regex مع علم g ولكن سيتم إعادة تعيين lastIndex يدوياً
+    let regex = /\[(\d{2}):(\d{2})(?:[\.:](\d{1,3}))?\]/g;
 
-function resizeWaveformCanvas() { let e = waveformContainer.getBoundingClientRect(); waveformCanvas.width = e.width * (window.devicePixelRatio || 1), waveformCanvas.height = e.height * (window.devicePixelRatio || 1), waveformCtx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1), waveformData && drawWaveform() }
-window.addEventListener("resize", () => { resizeWaveformCanvas(), waveformData && drawWaveform() }), setTimeout(resizeWaveformCanvas, 100);
+    for (let line of lines) {
+        // ✨ الإصلاح الأساسي: إعادة تعيين lastIndex قبل كل سطر
+        regex.lastIndex = 0;
 
-function extractWaveformData(e) { let t = e.getChannelData(0), n = waveformCanvas.width, r = Math.floor(t.length / n), o = []; for (let i = 0; i < n; i++) { let e = r * i, s = Math.min(e + r, t.length), a = 0; for (let n = e; n < s; n++) { let e = Math.abs(t[n]); e > a && (a = e) } o.push(a) } let i = Math.max(...o, .001); return o.map(e => e / i) }
-async function loadAudioBuffer(e) { try { let t = await fetch(e), n = await t.arrayBuffer(), r = audioContext || new(window.AudioContext || window.webkitAudioContext); audioContext || (audioContext = r); let o = await r.decodeAudioData(n); waveformData = extractWaveformData(o), drawWaveform() } catch (e) { console.warn("تعذر تحميل الموجة:", e), waveformData = null } }
-function drawWaveform(e = audio.currentTime || 0, t = audio.duration || 1) { if (!waveformData || !waveformCtx) return; let n = waveformCanvas.width / (window.devicePixelRatio || 1), r = waveformCanvas.height / (window.devicePixelRatio || 1); waveformCtx.clearRect(0, 0, n, r), waveformCtx.fillStyle = "#0A0A0D", waveformCtx.fillRect(0, 0, n, r); let o = n / waveformData.length, i = r / 2, s = e / t * n; for (let a = 0; a < waveformData.length; a++) { let e = a * o, t = waveformData[a], l = t * (.8 * r); waveformCtx.fillStyle = e < s ? "rgba(210,210,240,1)" : "rgba(180,180,210,0.7)", waveformCtx.fillRect(e, i - l / 2, o - 1, l) } waveformCtx.beginPath(), waveformCtx.strokeStyle = "#FFFFFF", waveformCtx.lineWidth = 2, waveformCtx.moveTo(s, 0), waveformCtx.lineTo(s, r), waveformCtx.stroke() }
-function startWaveformProgress() { if (!waveformLoopActive) { waveformLoopActive = !0; let e = () => { waveformLoopActive && (!audio.paused && waveformData && audio.duration && drawWaveform(audio.currentTime, audio.duration), waveDrawAnimationId = requestAnimationFrame(e)) }; e() } }
-function stopWaveformProgress() { waveformLoopActive = !1, waveDrawAnimationId && (cancelAnimationFrame(waveDrawAnimationId), waveDrawAnimationId = null) }
-function startAutoResume() { autoResumeEnabled && isPlaying && songs.length && (stopAutoResume(), resumeAttempts = 0, attemptResume()) }
-function attemptResume() { if (resumeAttempts >= MAX_RESUME_ATTEMPTS) stopAutoResume(); else { resumeAttempts++, resumeTimeout = setTimeout(async () => { !userPaused && autoResumeEnabled && songs.length && audio.paused ? await audio.play().then(() => { isPlaying = !0, playPauseBtn.innerHTML = "⏸️", startAlbumRotation(), enableSlow3D(!0), startVisualizerLoop(), startSpectrumLoop(), startWaveformProgress(), updateMediaSession(), stopAutoResume(), showToast("🔄 تم استئناف الموسيقى تلقائياً") }).catch(() => attemptResume()) : stopAutoResume() }, RESUME_INTERVAL) } }
-function stopAutoResume() { resumeTimeout && (clearTimeout(resumeTimeout), resumeTimeout = null), resumeAttempts = 0 }
-function handleWaveformSeek(e) { if (audio.duration && waveformData) { let t = waveformContainer.getBoundingClientRect(), n = Math.min(1, Math.max(0, (e - t.left) / t.width)); audio.currentTime = n * audio.duration, updateLyricsByTime(audio.currentTime) } }
-waveformClickTarget.addEventListener("click", e => handleWaveformSeek(e.clientX)), waveformClickTarget.addEventListener("mousedown", e => { if (!audio.duration || !waveformData) return; let t = waveformContainer.getBoundingClientRect(), n = t => { let n = Math.min(1, Math.max(0, (t.clientX - t.left) / t.width)); audio.currentTime = n * audio.duration, updateLyricsByTime(audio.currentTime) }, r = () => { document.removeEventListener("mousemove", n), document.removeEventListener("mouseup", r) }; document.addEventListener("mousemove", n), document.addEventListener("mouseup", r), handleWaveformSeek(e.clientX) }), waveformClickTarget.addEventListener("touchstart", e => { if (!audio.duration || !waveformData) return; let t = waveformContainer.getBoundingClientRect(), n = e => { let n = Math.min(1, Math.max(0, (e.touches[0].clientX - t.left) / t.width)); audio.currentTime = n * audio.duration, updateLyricsByTime(audio.currentTime) }, r = () => { document.removeEventListener("touchmove", n), document.removeEventListener("touchend", r) }; document.addEventListener("touchmove", n, { passive: !0 }), document.addEventListener("touchend", r), handleWaveformSeek(e.touches[0].clientX) });
-let touchStartX = 0, touchStartY = 0, touchHandled = !1;
+        let match;
+        let times = [];
+
+        // استخراج جميع الطوابع الزمنية في السطر الواحد
+        while (null !== (match = regex.exec(line))) {
+            let minutes = parseInt(match[1], 10);
+            let seconds = parseInt(match[2], 10);
+            let fraction = match[3] ? parseInt(match[3], 10) : 0;
+            // إذا كان الكسر مكوناً من 3 أرقام نعتبره أجزاء من الألف (milliseconds)
+            // وإلا نعتبره أجزاء من المئة (centiseconds)
+            let fractionDivisor = match[3] && match[3].length === 3 ? 1000 : 100;
+            let timeInSeconds = 60 * minutes + seconds + fraction / fractionDivisor;
+            times.push(timeInSeconds);
+        }
+
+        // إزالة الطوابع الزمنية للحصول على النص
+        let text = line.replace(/\[(\d{2}):(\d{2})(?:[\.:](\d{1,3}))?\]/g, "").trim();
+
+        if (times.length > 0 && text !== "") {
+            for (let t of times) {
+                entries.push({ time: t, text: text });
+            }
+        }
+    }
+
+    return entries.sort((a, b) => a.time - b.time);
+}
+
+function convertLRCtoSRTlike(lrcEntries, fallbackDuration = 300) {
+    let cues = [];
+    for (let i = 0; i < lrcEntries.length; i++) {
+        let start = lrcEntries[i].time;
+        // المدة حتى التلميح التالي، أو مدة افتراضية
+        let end = (i + 1 < lrcEntries.length) ? lrcEntries[i + 1].time : start + fallbackDuration;
+        // ضمان عدم تجاوز النهاية للنطاق المعقول
+        if (end - start > 15) end = start + 5; // إذا كانت المدة طويلة جداً، نقتصر على 5 ثوانٍ
+        cues.push({ start: start, end: end, text: lrcEntries[i].text });
+    }
+    return cues;
+}
+
+function loadLyricsData(content, fileName, audioDuration) {
+    let nameLower = fileName.toLowerCase();
+    let fallbackDuration = (audioDuration && isFinite(audioDuration) && audioDuration > 0) ? audioDuration : 300;
+
+    if (nameLower.endsWith(".lrc") || nameLower.endsWith(".txt")) {
+        let lrcEntries = parseLRC(content);
+        if (lrcEntries.length === 0) return false;
+        let cues = convertLRCtoSRTlike(lrcEntries, fallbackDuration);
+        return {
+            cues: cues,
+            words: parseSRTtoWords(cues),
+            content: content,
+            fileName: fileName
+        };
+    } else {
+        // معالجة SRT
+        let blocks = content.split(/\r?\n\r?\n/);
+        let cues = [];
+        for (let block of blocks) {
+            let lines = block.split(/\r?\n/);
+            if (lines.length < 2) continue;
+            let timingLine = lines[1];
+            if (!timingLine.includes("-->")) continue;
+            let parts = timingLine.split("-->");
+            if (parts.length !== 2) continue;
+            let start = parseTime(parts[0]);
+            let end = parseTime(parts[1]);
+            let text = lines.slice(2).join(" ").replace(/<[^>]*>/g, "").trim();
+            if (text && !isNaN(start) && !isNaN(end)) {
+                cues.push({ start: start, end: end, text: text });
+            }
+        }
+        if (cues.length === 0) return false;
+        return {
+            cues: cues,
+            words: parseSRTtoWords(cues),
+            content: content,
+            fileName: fileName
+        };
+    }
+}
+
+function parseSRTtoWords(cues) {
+    let words = [];
+    for (let cue of cues) {
+        let tokens = cue.text.split(/\s+/);
+        if (tokens.length === 0) continue;
+        let durationPerWord = (cue.end - cue.start) / tokens.length;
+        for (let i = 0; i < tokens.length; i++) {
+            let word = tokens[i].replace(/[،,.;؟!]/g, "");
+            if (word.length > 0) {
+                words.push({
+                    time: cue.start + i * durationPerWord,
+                    word: word
+                });
+            }
+        }
+    }
+    return words.sort((a, b) => a.time - b.time);
+}
+
+function formatTime(e) {
+    if (isNaN(e)) return "0:00";
+    let minutes = Math.floor(e / 60);
+    let seconds = Math.floor(e % 60);
+    return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+}
+
+function showToast(msg) {
+    let existing = document.querySelector(".toast");
+    if (existing) existing.remove();
+    let toast = document.createElement("div");
+    toast.className = "toast";
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 2500);
+}
+
+// ========== المتغيرات العامة ==========
+const audio = new Audio();
+let songs = [],
+    currentIndex = 0,
+    isPlaying = false,
+    isRepeating = false,
+    isShuffling = false,
+    isCameraRotating = false,
+    rotationAngle = 0,
+    cameraId = null,
+    audioContext = null,
+    source = null,
+    gainNode = null,
+    analyser = null,
+    filters = [],
+    isAudioInitialized = false,
+    volumeEnhance = 0.7,
+    boostLevel = 1,
+    bassLevelVal = 0,
+    wetGain = null,
+    dryGain = null,
+    mixGain = null,
+    convolverNode = null,
+    reverbSliderValue = 0.3,
+    palaceEnabled = false,
+    visualizerBars = [],
+    visualizerAnimId = null,
+    spectrumAnimId = null,
+    waveDrawAnimationId = null,
+    waveformLoopActive = false,
+    autoResumeEnabled = true,
+    userPaused = false,
+    resumeTimeout = null,
+    resumeAttempts = 0;
+
+const MAX_RESUME_ATTEMPTS = 3,
+      RESUME_INTERVAL = 10000;
+
+// تخزين الترجمات لكل أغنية
+const songLyricsMap = new Map();
+let allObjectURLs = [],
+    srtCues = [],
+    wordTimeline = [],
+    rawLyricsContent = null,
+    rawLyricsFileName = null,
+    currentMode = "word",
+    lastStageIndex = -1,
+    stageTransitionTimeout = null;
+
+// ========== Media Session ==========
+function updateMediaSession() {
+    if ("mediaSession" in navigator) {
+        let song = songs[currentIndex];
+        if (song) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: song.title || "أغنية غير معروفة",
+                artist: song.artist || "فنان فضي",
+                album: "المشغل الفضي",
+                artwork: [{ src: song.cover || "", sizes: "200x200", type: "image/png" }]
+            });
+            navigator.mediaSession.setActionHandler("play", () => { if (!isPlaying) playPauseBtn.click(); });
+            navigator.mediaSession.setActionHandler("pause", () => { if (isPlaying) playPauseBtn.click(); });
+            navigator.mediaSession.setActionHandler("previoustrack", () => prevBtn.click());
+            navigator.mediaSession.setActionHandler("nexttrack", () => nextBtn.click());
+        } else {
+            navigator.mediaSession.metadata = null;
+        }
+    }
+}
+
+// ========== عناصر DOM ==========
+const playPauseBtn = document.getElementById("playPauseBtn"),
+      prevBtn = document.getElementById("prevBtn"),
+      nextBtn = document.getElementById("nextBtn"),
+      repeatBtn = document.getElementById("repeatBtn"),
+      shuffleBtn = document.getElementById("shuffleBtn"),
+      currentTimeSpan = document.getElementById("currentTime"),
+      durationSpan = document.getElementById("duration"),
+      volumeSlider = document.getElementById("volumeSlider"),
+      volumeProgress = document.getElementById("volumeProgress"),
+      fileInput = document.getElementById("fileInput"),
+      playlistDiv = document.getElementById("playlist"),
+      songTitleSpan = document.getElementById("songTitle"),
+      songArtistSpan = document.getElementById("songArtist"),
+      albumImage = document.getElementById("albumImage"),
+      albumContainer = document.getElementById("albumArtContainer"),
+      loadingOverlay = document.getElementById("loadingOverlay"),
+      lyricsWordDiv = document.getElementById("lyricsWord"),
+      stageContainer = document.getElementById("stageContainer"),
+      prevWordDiv = document.getElementById("prevWord"),
+      currentWordDiv = document.getElementById("currentWord"),
+      nextWordDiv = document.getElementById("nextWord"),
+      srtInput = document.getElementById("srtInput"),
+      clearSrtBtn = document.getElementById("clearSrtBtn"),
+      toggleModeBtn = document.getElementById("toggleModeBtn"),
+      srtStatusMsg = document.getElementById("srtStatusMsg"),
+      waveformCanvas = document.getElementById("waveformCanvas"),
+      waveformContainer = document.getElementById("waveformContainer"),
+      waveformClickTarget = document.getElementById("waveformClickTarget"),
+      visualizerDiv = document.getElementById("visualizer"),
+      spectrumCanvas = document.getElementById("spectrumCanvas"),
+      ctx = spectrumCanvas.getContext("2d"),
+      advancedSection = document.getElementById("advancedSection"),
+      advancedToggleChip = document.getElementById("advancedToggleChip"),
+      palaceControls = document.getElementById("palaceEffectControls"),
+      playerSection = document.getElementById("playerSection"),
+      dropOverlay = document.getElementById("dropOverlay"),
+      burgerMenuBtn = document.getElementById("burgerMenuBtn"),
+      burgerDropdown = document.getElementById("burgerDropdown"),
+      playlistCountSpan = document.getElementById("playlistCount");
+
+let waveformCtx = waveformCanvas.getContext("2d"),
+    waveformData = null,
+    advancedPanelVisible = true;
+
+// ========== رسم الموجة الصوتية ==========
+function resizeWaveformCanvas() {
+    let rect = waveformContainer.getBoundingClientRect();
+    waveformCanvas.width = rect.width * (window.devicePixelRatio || 1);
+    waveformCanvas.height = rect.height * (window.devicePixelRatio || 1);
+    waveformCtx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    if (waveformData) drawWaveform();
+}
+window.addEventListener("resize", () => {
+    resizeWaveformCanvas();
+    if (waveformData) drawWaveform();
+});
+setTimeout(resizeWaveformCanvas, 100);
+
+function extractWaveformData(buffer) {
+    let data = buffer.getChannelData(0);
+    let width = waveformCanvas.width;
+    let step = Math.floor(data.length / width);
+    let peaks = [];
+    for (let i = 0; i < width; i++) {
+        let start = step * i;
+        let end = Math.min(start + step, data.length);
+        let max = 0;
+        for (let j = start; j < end; j++) {
+            let val = Math.abs(data[j]);
+            if (val > max) max = val;
+        }
+        peaks.push(max);
+    }
+    let globalMax = Math.max(...peaks, 0.001);
+    return peaks.map(p => p / globalMax);
+}
+
+async function loadAudioBuffer(url) {
+    try {
+        let response = await fetch(url);
+        let arrayBuffer = await response.arrayBuffer();
+        let ctx = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioContext) audioContext = ctx;
+        let audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        waveformData = extractWaveformData(audioBuffer);
+        drawWaveform();
+    } catch (err) {
+        console.warn("تعذر تحميل الموجة:", err);
+        waveformData = null;
+    }
+}
+
+function drawWaveform(currentTime = audio.currentTime || 0, duration = audio.duration || 1) {
+    if (!waveformData || !waveformCtx) return;
+    let w = waveformCanvas.width / (window.devicePixelRatio || 1);
+    let h = waveformCanvas.height / (window.devicePixelRatio || 1);
+    waveformCtx.clearRect(0, 0, w, h);
+    waveformCtx.fillStyle = "#0A0A0D";
+    waveformCtx.fillRect(0, 0, w, h);
+    let barWidth = w / waveformData.length;
+    let centerY = h / 2;
+    let progressX = (currentTime / duration) * w;
+
+    for (let i = 0; i < waveformData.length; i++) {
+        let x = i * barWidth;
+        let peak = waveformData[i];
+        let barHeight = peak * (0.8 * h);
+        waveformCtx.fillStyle = x < progressX ? "rgba(210,210,240,1)" : "rgba(180,180,210,0.7)";
+        waveformCtx.fillRect(x, centerY - barHeight / 2, barWidth - 1, barHeight);
+    }
+    waveformCtx.beginPath();
+    waveformCtx.strokeStyle = "#FFFFFF";
+    waveformCtx.lineWidth = 2;
+    waveformCtx.moveTo(progressX, 0);
+    waveformCtx.lineTo(progressX, h);
+    waveformCtx.stroke();
+}
+
+function startWaveformProgress() {
+    if (!waveformLoopActive) {
+        waveformLoopActive = true;
+        function loop() {
+            if (!waveformLoopActive) return;
+            if (!audio.paused && waveformData && audio.duration) {
+                drawWaveform(audio.currentTime, audio.duration);
+            }
+            waveDrawAnimationId = requestAnimationFrame(loop);
+        }
+        loop();
+    }
+}
+
+function stopWaveformProgress() {
+    waveformLoopActive = false;
+    if (waveDrawAnimationId) {
+        cancelAnimationFrame(waveDrawAnimationId);
+        waveDrawAnimationId = null;
+    }
+}
+
+// ========== الاستئناف التلقائي ==========
+function startAutoResume() {
+    if (autoResumeEnabled && isPlaying && songs.length) {
+        stopAutoResume();
+        resumeAttempts = 0;
+        attemptResume();
+    }
+}
+function attemptResume() {
+    if (resumeAttempts >= MAX_RESUME_ATTEMPTS) {
+        stopAutoResume();
+        return;
+    }
+    resumeAttempts++;
+    resumeTimeout = setTimeout(async () => {
+        if (!userPaused && autoResumeEnabled && songs.length && audio.paused) {
+            await audio.play().then(() => {
+                isPlaying = true;
+                playPauseBtn.innerHTML = "⏸️";
+                startAlbumRotation();
+                enableSlow3D(true);
+                startVisualizerLoop();
+                startSpectrumLoop();
+                startWaveformProgress();
+                updateMediaSession();
+                stopAutoResume();
+                showToast("🔄 تم استئناف الموسيقى تلقائياً");
+            }).catch(() => attemptResume());
+        } else {
+            stopAutoResume();
+        }
+    }, RESUME_INTERVAL);
+}
+function stopAutoResume() {
+    if (resumeTimeout) {
+        clearTimeout(resumeTimeout);
+        resumeTimeout = null;
+    }
+    resumeAttempts = 0;
+}
+
+// ========== السحب على الموجة ==========
+function handleWaveformSeek(clientX) {
+    if (audio.duration && waveformData) {
+        let rect = waveformContainer.getBoundingClientRect();
+        let ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        audio.currentTime = ratio * audio.duration;
+        updateLyricsByTime(audio.currentTime);
+    }
+}
+waveformClickTarget.addEventListener("click", e => handleWaveformSeek(e.clientX));
+waveformClickTarget.addEventListener("mousedown", e => {
+    if (!audio.duration || !waveformData) return;
+    let rect = waveformContainer.getBoundingClientRect();
+    let onMove = (ev) => {
+        let ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+        audio.currentTime = ratio * audio.duration;
+        updateLyricsByTime(audio.currentTime);
+    };
+    let onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    handleWaveformSeek(e.clientX);
+});
+waveformClickTarget.addEventListener("touchstart", e => {
+    if (!audio.duration || !waveformData) return;
+    let rect = waveformContainer.getBoundingClientRect();
+    let onMove = (ev) => {
+        let ratio = Math.min(1, Math.max(0, (ev.touches[0].clientX - rect.left) / rect.width));
+        audio.currentTime = ratio * audio.duration;
+        updateLyricsByTime(audio.currentTime);
+    };
+    let onEnd = () => {
+        document.removeEventListener("touchmove", onMove);
+        document.removeEventListener("touchend", onEnd);
+    };
+    document.addEventListener("touchmove", onMove, { passive: true });
+    document.addEventListener("touchend", onEnd);
+    handleWaveformSeek(e.touches[0].clientX);
+});
+
+// ========== إيماءات اللمس ==========
+let touchStartX = 0, touchStartY = 0, touchHandled = false;
 const musicPlayerContainer = document.getElementById("musicPlayerContainer");
-musicPlayerContainer.addEventListener("touchstart", e => { e.target.closest(".playlist-item, button, input, label, .waveform-click-target, .volume-slider") ? touchHandled = !1 : (touchStartX = e.touches[0].clientX, touchStartY = e.touches[0].clientY, touchHandled = !1) }, { passive: !0 }), musicPlayerContainer.addEventListener("touchmove", e => { if (!touchHandled && Math.abs(e.touches[0].clientY - touchStartY) < 30) { let t = e.touches[0].clientX - touchStartX; Math.abs(t) > 60 && (touchHandled = !0, t < -40 ? (playNext(), isPlaying && audio.play(), showToast("⏭️ الأغنية التالية")) : t > 40 && songs.length && (currentIndex--, currentIndex < 0 && (currentIndex = songs.length - 1), loadSong(currentIndex), isPlaying && audio.play(), updatePlaylistActive(), showToast("⏮️ الأغنية السابقة"))) } }, { passive: !0 }), musicPlayerContainer.addEventListener("touchend", () => { touchHandled = !1 });
+musicPlayerContainer.addEventListener("touchstart", e => {
+    if (e.target.closest(".playlist-item, button, input, label, .waveform-click-target, .volume-slider")) {
+        touchHandled = false;
+    } else {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        touchHandled = false;
+    }
+}, { passive: true });
+musicPlayerContainer.addEventListener("touchmove", e => {
+    if (!touchHandled && Math.abs(e.touches[0].clientY - touchStartY) < 30) {
+        let diffX = e.touches[0].clientX - touchStartX;
+        if (Math.abs(diffX) > 60) {
+            touchHandled = true;
+            if (diffX < -40) {
+                playNext();
+                if (isPlaying) audio.play();
+                showToast("⏭️ الأغنية التالية");
+            } else if (diffX > 40 && songs.length) {
+                currentIndex--;
+                if (currentIndex < 0) currentIndex = songs.length - 1;
+                loadSong(currentIndex);
+                if (isPlaying) audio.play();
+                updatePlaylistActive();
+                showToast("⏮️ الأغنية السابقة");
+            }
+        }
+    }
+}, { passive: true });
+musicPlayerContainer.addEventListener("touchend", () => { touchHandled = false; });
 
-function updateLyricsByTime(e) { if ("word" === currentMode) { if (!wordTimeline.length) { "🎤 ارفع SRT/LRC" !== lyricsWordDiv.innerText && (lyricsWordDiv.innerText = "🎤 ارفع SRT/LRC"); return } let t = null; for (let n = 0; n < wordTimeline.length && wordTimeline[n].time <= e; n++) t = wordTimeline[n].word; t && lyricsWordDiv.innerText !== t ? lyricsWordDiv.innerText = t : !t && "✨ استعد" !== lyricsWordDiv.innerText && (lyricsWordDiv.innerText = "✨ استعد") } else if ("sentence" === currentMode) { if (!srtCues.length) { "🎤 ارفع SRT/LRC" !== lyricsWordDiv.innerText && (lyricsWordDiv.innerText = "🎤 ارفع SRT/LRC"); return } let t = null; for (let n of srtCues) if (e >= n.start && e <= n.end) { t = n; break } if (t) { let e = t.text.length > 85 ? t.text.substring(0, 85) + "..." : t.text; lyricsWordDiv.innerText !== e && (lyricsWordDiv.innerText = e) } else "✨ يترقب" !== lyricsWordDiv.innerText && (lyricsWordDiv.innerText = "✨ يترقب") } else if ("stage" === currentMode) { if (!wordTimeline.length) { prevWordDiv.textContent = "", currentWordDiv.textContent = "🎤 ارفع SRT/LRC", nextWordDiv.textContent = ""; return } let t = -1; for (let n = 0; n < wordTimeline.length && wordTimeline[n].time <= e; n++) t = n; t !== lastStageIndex && (updateStageWords(t), lastStageIndex = t) } }
-function updateStageWords(e) { prevWordDiv.classList.remove("prev-exit"), currentWordDiv.classList.remove("current-enter"), nextWordDiv.classList.remove("next-enter"), void prevWordDiv.offsetWidth; let t = e > 0 ? wordTimeline[e - 1].word : "", n = e >= 0 && e < wordTimeline.length ? wordTimeline[e].word : "🎤", r = e >= 0 && e < wordTimeline.length - 1 ? wordTimeline[e + 1].word : ""; if (-1 === lastStageIndex) return prevWordDiv.textContent = t, currentWordDiv.textContent = n, nextWordDiv.textContent = r, prevWordDiv.style.opacity = t ? "0.45" : "0", currentWordDiv.style.opacity = "1", void(nextWordDiv.style.opacity = r ? "0.45" : "0"); t ? (prevWordDiv.textContent = t, prevWordDiv.classList.add("prev-exit")) : (prevWordDiv.textContent = "", prevWordDiv.style.opacity = "0"), currentWordDiv.textContent = n, currentWordDiv.classList.add("current-enter"), r ? (nextWordDiv.textContent = r, nextWordDiv.classList.add("next-enter")) : (nextWordDiv.textContent = "", nextWordDiv.style.opacity = "0"), stageTransitionTimeout && clearTimeout(stageTransitionTimeout), stageTransitionTimeout = setTimeout(() => { prevWordDiv.classList.remove("prev-exit"), currentWordDiv.classList.remove("current-enter"), nextWordDiv.classList.remove("next-enter"), prevWordDiv.style.opacity = t ? "0.45" : "0", currentWordDiv.style.opacity = "1", nextWordDiv.style.opacity = r ? "0.45" : "0" }, 500) }
-audio.addEventListener("timeupdate", () => { audio.duration && (currentTimeSpan.textContent = formatTime(audio.currentTime), durationSpan.textContent = formatTime(audio.duration)), updateLyricsByTime(audio.currentTime) });
+// ========== نظام الكلمات (Lyrics) ==========
+function updateLyricsByTime(currentTime) {
+    if (currentMode === "word") {
+        if (!wordTimeline.length) {
+            if (lyricsWordDiv.innerText !== "🎤 ارفع SRT/LRC") {
+                lyricsWordDiv.innerText = "🎤 ارفع SRT/LRC";
+            }
+            return;
+        }
+        let foundWord = null;
+        for (let i = 0; i < wordTimeline.length && wordTimeline[i].time <= currentTime; i++) {
+            foundWord = wordTimeline[i].word;
+        }
+        if (foundWord && lyricsWordDiv.innerText !== foundWord) {
+            lyricsWordDiv.innerText = foundWord;
+        } else if (!foundWord && lyricsWordDiv.innerText !== "✨ استعد") {
+            lyricsWordDiv.innerText = "✨ استعد";
+        }
+    } else if (currentMode === "sentence") {
+        if (!srtCues.length) {
+            if (lyricsWordDiv.innerText !== "🎤 ارفع SRT/LRC") {
+                lyricsWordDiv.innerText = "🎤 ارفع SRT/LRC";
+            }
+            return;
+        }
+        let foundCue = null;
+        for (let cue of srtCues) {
+            if (currentTime >= cue.start && currentTime <= cue.end) {
+                foundCue = cue;
+                break;
+            }
+        }
+        if (foundCue) {
+            let displayText = foundCue.text.length > 85 ? foundCue.text.substring(0, 85) + "..." : foundCue.text;
+            if (lyricsWordDiv.innerText !== displayText) {
+                lyricsWordDiv.innerText = displayText;
+            }
+        } else if (lyricsWordDiv.innerText !== "✨ يترقب") {
+            lyricsWordDiv.innerText = "✨ يترقب";
+        }
+    } else if (currentMode === "stage") {
+        if (!wordTimeline.length) {
+            prevWordDiv.textContent = "";
+            currentWordDiv.textContent = "🎤 ارفع SRT/LRC";
+            nextWordDiv.textContent = "";
+            return;
+        }
+        let activeIndex = -1;
+        for (let i = 0; i < wordTimeline.length && wordTimeline[i].time <= currentTime; i++) {
+            activeIndex = i;
+        }
+        if (activeIndex !== lastStageIndex) {
+            updateStageWords(activeIndex);
+            lastStageIndex = activeIndex;
+        }
+    }
+}
 
-function enableSlow3D(e) { e ? lyricsWordDiv.classList.add("rotate-3d-active") : lyricsWordDiv.classList.remove("rotate-3d-active") }
-function switchUIMode() { "stage" === currentMode ? (lyricsWordDiv.style.visibility = "hidden", lyricsWordDiv.style.position = "absolute", stageContainer.style.visibility = "visible", stageContainer.style.position = "relative", [prevWordDiv, currentWordDiv, nextWordDiv].forEach(e => e.classList.remove("prev-exit", "current-enter", "next-enter"))) : (lyricsWordDiv.style.visibility = "visible", lyricsWordDiv.style.position = "relative", stageContainer.style.visibility = "hidden", stageContainer.style.position = "absolute") }
-function toggleMode() { "word" === currentMode ? (currentMode = "sentence", toggleModeBtn.innerHTML = "🔁 وضع: جملة") : "sentence" === currentMode ? (currentMode = "stage", toggleModeBtn.innerHTML = "🔁 وضع: مسرح") : (currentMode = "word", toggleModeBtn.innerHTML = "🔁 وضع: كلمة"), lastStageIndex = -1, switchUIMode(), enableSlow3D(isPlaying), audio && !isNaN(audio.currentTime) && updateLyricsByTime(audio.currentTime) }
-function clearSRT() { let e = getCurrentSongId(); e && songLyricsMap.delete(e), srtCues = [], wordTimeline = [], rawLyricsContent = null, rawLyricsFileName = null, srtInput.value = "", srtStatusMsg.innerHTML = "تم مسح الترجمة - ارفع SRT أو LRC جديد", "stage" === currentMode ? (prevWordDiv.textContent = "", currentWordDiv.textContent = "📄 تم المسح", nextWordDiv.textContent = "") : lyricsWordDiv.innerText = "📄 تم المسح", lastStageIndex = -1 }
-function processLyricsFile(e, t) { let n = getCurrentSongId(), r = audio.duration && !isNaN(audio.duration) ? audio.duration : 300, o = loadLyricsData(e, t, r); o && n ? (songLyricsMap.set(n, { cues: o.cues, words: o.words, content: e, fileName: t }), srtCues = o.cues, wordTimeline = o.words, rawLyricsContent = e, rawLyricsFileName = t, srtStatusMsg.innerHTML = "✅ تم تحميل وحفظ " + o.cues.length + " مقطع (" + o.words.length + " كلمة) - " + t, lastStageIndex = -1, audio && !isNaN(audio.currentTime) && updateLyricsByTime(audio.currentTime)) : (srtStatusMsg.innerHTML = "❌ خطأ في تنسيق الملف", n || (srtStatusMsg.innerHTML += " | أضف أغنية أولاً")) }
-srtInput.addEventListener("change", e => { let t = e.target.files[0]; if (t) { let e = new FileReader; e.onload = e => processLyricsFile(e.target.result, t.name), e.readAsText(t, "UTF-8"), t = null } }), clearSrtBtn.addEventListener("click", clearSRT), toggleModeBtn.addEventListener("click", toggleMode);
+function updateStageWords(index) {
+    prevWordDiv.classList.remove("prev-exit");
+    currentWordDiv.classList.remove("current-enter");
+    nextWordDiv.classList.remove("next-enter");
+    // force reflow
+    void prevWordDiv.offsetWidth;
 
-function getCurrentSongId() { return songs[currentIndex]?.src || null }
-function loadLyricsForCurrentSong() { let e = getCurrentSongId(); if (e && songLyricsMap.has(e)) { let t = songLyricsMap.get(e); srtCues = t.cues, wordTimeline = t.words, rawLyricsContent = t.content, rawLyricsFileName = t.fileName, srtStatusMsg.innerHTML = "✅ ترجمة محفوظة: " + t.cues.length + " مقطع (" + t.words.length + " كلمة) - " + t.fileName } else srtCues = [], wordTimeline = [], rawLyricsContent = null, rawLyricsFileName = null, srtStatusMsg.innerHTML = "🎤 لا توجد ترجمة لهذه الأغنية."; lastStageIndex = -1, updateLyricsByTime(audio.currentTime || 0), switchUIMode() }
-function getAudioDuration(e) { return new Promise(t => { let n = new Audio, r = URL.createObjectURL(e); n.src = r, n.addEventListener("loadedmetadata", () => { let e = n.duration; URL.revokeObjectURL(r), t(isNaN(e) ? 0 : e) }), n.addEventListener("error", () => { URL.revokeObjectURL(r), t(0) }) }) }
-function updatePlaylistCount() { playlistCountSpan.textContent = songs.length }
-function renderPlaylistItem(e) { let t = songs[e], n = document.createElement("div"); n.className = "playlist-item", n.draggable = !0, n.dataset.index = e; let r = t.duration > 0 ? formatTime(t.duration) : "--:--"; n.innerHTML = '\n            <span class="drag-handle" title="اسحب لإعادة الترتيب">⋮⋮</span>\n            <span class="song-index">' + (e + 1) + '</span>\n            <span class="song-name" title="' + t.title + '">' + t.title + '</span>\n            <span class="song-duration">' + r + '</span>\n            <button class="delete-song-btn" title="حذف الأغنية" data-index="' + e + '">×</button>\n        ', e === currentIndex && n.classList.add("active"), n.addEventListener("click", t => { if (!t.target.closest(".delete-song-btn") && !t.target.closest(".drag-handle")) { currentIndex = e, loadSong(currentIndex), isPlaying && audio.play(), updatePlaylistActive() } }), n.querySelector(".delete-song-btn").addEventListener("click", t => { t.stopPropagation(), deleteSong(e) }), n.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", e.toString()), n.classList.add("dragging") }), n.addEventListener("dragend", () => n.classList.remove("dragging")), n.addEventListener("dragover", e => { e.preventDefault(), n.classList.add("drag-over") }), n.addEventListener("dragleave", () => n.classList.remove("drag-over")), n.addEventListener("drop", t => { t.preventDefault(), n.classList.remove("drag-over"); let r = parseInt(t.dataTransfer.getData("text/plain"), 10), o = parseInt(n.dataset.index, 10); r !== o && !isNaN(r) && !isNaN(o) && moveSong(r, o) }); let o = 0; return n.querySelector(".drag-handle").addEventListener("touchstart", e => { o = e.touches[0].clientY, n.style.transition = "none" }), n.querySelector(".drag-handle").addEventListener("touchmove", e => { let t = e.touches[0].clientY - o; n.style.transform = "translateY(" + t + "px)", n.style.zIndex = "10", n.style.opacity = "0.8"; let r = [...playlistDiv.querySelectorAll(".playlist-item")]; r.forEach(e => e.classList.remove("drag-over")); let i = r.find(t => { let n = t.getBoundingClientRect(); return e.touches[0].clientY >= n.top && e.touches[0].clientY <= n.bottom && t !== n }); i && i.classList.add("drag-over") }), n.querySelector(".drag-handle").addEventListener("touchend", e => { n.style.transition = "all 0.2s", n.style.transform = "", n.style.zIndex = "", n.style.opacity = ""; let t = [...playlistDiv.querySelectorAll(".playlist-item")]; t.forEach(e => e.classList.remove("drag-over")); let r = t.find(t => { let n = t.getBoundingClientRect(); return e.changedTouches[0].clientY >= n.top && e.changedTouches[0].clientY <= n.bottom && t !== n }); if (r) { let e = parseInt(n.dataset.index, 10), t = parseInt(r.dataset.index, 10); !isNaN(e) && !isNaN(t) && e !== t && moveSong(e, t) } }), n }
-function refreshPlaylist() { playlistDiv.innerHTML = "", 0 === songs.length ? playlistDiv.innerHTML = '<div class="playlist-empty">🎵 لا توجد أغانٍ - أضف ملفات موسيقية</div>' : songs.forEach((e, t) => playlistDiv.appendChild(renderPlaylistItem(t))), updatePlaylistCount() }
-function updatePlaylistActive() { document.querySelectorAll(".playlist-item").forEach((e, t) => { t === currentIndex ? e.classList.add("active") : e.classList.remove("active") }) }
-function deleteSong(e) { if (!(e < 0 || e >= songs.length)) { let t = songs[e]; if (t.src && allObjectURLs.includes(t.src)) { let n = songs[currentIndex]?.src; t.src !== n && (URL.revokeObjectURL(t.src), allObjectURLs = allObjectURLs.filter(e => e !== t.src)) } let n = t.src; n && songLyricsMap.delete(n), songs.splice(e, 1), 0 === songs.length ? (currentIndex = 0, audio.src = "", songTitleSpan.textContent = "🎵 أضف موسيقى", songArtistSpan.textContent = "فنان فضي", albumImage.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E", waveformData = null, drawWaveform(0, 1), srtCues = [], wordTimeline = [], updateMediaSession()) : (currentIndex >= songs.length && (currentIndex = songs.length - 1), e <= currentIndex && currentIndex > 0 && currentIndex--, loadSong(currentIndex), isPlaying && audio.play()), refreshPlaylist(), updatePlaylistActive(), showToast("🗑 تم حذف الأغنية") } }
-function moveSong(e, t) { if (e !== t) { let n = songs.splice(e, 1)[0]; songs.splice(t, 0, n), currentIndex === e ? currentIndex = t : e < currentIndex && t >= currentIndex ? currentIndex-- : e > currentIndex && t <= currentIndex && currentIndex++, refreshPlaylist(), updatePlaylistActive() } }
-function clearAllPlaylist() { if (0 !== songs.length && confirm("هل أنت متأكد من مسح قائمة التشغيل بالكامل؟")) { let e = songs[currentIndex]?.src; for (let t of songs) t.src && t.src !== e && allObjectURLs.includes(t.src) && URL.revokeObjectURL(t.src); allObjectURLs = allObjectURLs.filter(t => t === e), songLyricsMap.clear(), songs = [], currentIndex = 0, userPaused = !0, stopAutoResume(), audio.pause(), isPlaying = !1, playPauseBtn.innerHTML = "▶️", stopAlbumRotation(), enableSlow3D(!1), stopVisualizerLoop(), stopSpectrumLoop(), stopWaveformProgress(), songTitleSpan.textContent = "🎵 أضف موسيقى", songArtistSpan.textContent = "فنان فضي", waveformData = null, srtCues = [], wordTimeline = [], updateMediaSession(), refreshPlaylist(), updatePlaylistActive(), showToast("🗑 تم مسح قائمة التشغيل") } }
-function exportPlaylist() { if (0 === songs.length) showToast("⚠️ لا توجد أغانٍ للتصدير"); else { let e = songs.map((e, t) => ({ index: t, title: e.title, artist: e.artist, duration: e.duration, fileName: e.title })), t = JSON.stringify({ version: 1, exportedAt: (new Date).toISOString(), songs: e }, null, 2), n = new Blob([t], { type: "application/json" }), r = URL.createObjectURL(n), o = document.createElement("a"); o.href = r, o.download = "playlist-backup-" + (new Date).toISOString().slice(0, 10) + ".json", o.click(), URL.revokeObjectURL(r), showToast("💾 تم تصدير قائمة التشغيل") } }
-function importPlaylist(e) { let t = new FileReader; t.onload = e => { try { let t = JSON.parse(e.target.result); if (!t.songs || !Array.isArray(t.songs)) throw new Error("تنسيق غير صالح"); showToast("📥 تم استيراد " + t.songs.length + " أغنية (المسارات المرجعية فقط - أعد إضافة الملفات الصوتية)"), alert("تم استيراد بيانات قائمة التشغيل. ملاحظة: لا يمكن استعادة الملفات الصوتية الفعلية، يجب إعادة إضافتها يدوياً.") } catch (e) { showToast("❌ فشل استيراد الملف: تنسيق غير صالح") } }, t.readAsText(e, "UTF-8") }
-async function addSongs(e) { for (let t of e) { let e = URL.createObjectURL(t); allObjectURLs.push(e); let n = await getAudioDuration(t); songs.push({ title: t.name.replace(/\.[^/.]+$/, ""), artist: "فنان فضي", src: e, cover: "", duration: n }) } refreshPlaylist(), songs.length > 0 && !audio.src && (currentIndex = 0, loadSong(0), isAudioInitialized || initAudioContext(), updatePlaylistActive()), updatePlaylistCount() }
-function stopAlbumRotation() { albumContainer.classList.remove("rotating") }
-function startAlbumRotation() { isPlaying && albumContainer.classList.add("rotating") }
-function showLoading() { loadingOverlay.style.display = "flex" }
-function hideLoading() { loadingOverlay.style.display = "none" }
-async function loadSong(e) { if (songs[e]) { showLoading(), audio.src = songs[e].src, songTitleSpan.textContent = songs[e].title, songArtistSpan.textContent = songs[e].artist || "فنان فضي", albumImage.src = songs[e].cover || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E", waveformData = null, songs[e].src && loadAudioBuffer(songs[e].src), loadLyricsForCurrentSong(), updateMediaSession(), audio.oncanplay = () => hideLoading(), audio.onerror = () => { hideLoading(), srtStatusMsg.innerHTML = "⚠️ خطأ في تحميل الملف الصوتي" }, isPlaying ? (audio.play().catch(e => console.log), enableSlow3D(!0)) : enableSlow3D(!1), updateLyricsByTime(0), setTimeout(() => { waveformData && drawWaveform(0, audio.duration || 1) }, 300), updatePlaylistActive(), songs[e].duration <= 0 && audio.duration && !isNaN(audio.duration) && (songs[e].duration = audio.duration, refreshPlaylist(), updatePlaylistActive()) } }
-function playNext() { if (songs.length) { if (isShuffling) { let e; do { e = Math.floor(Math.random() * songs.length) } while (e === currentIndex && songs.length > 1); currentIndex = e } else currentIndex++, currentIndex >= songs.length && (currentIndex = 0); loadSong(currentIndex), isPlaying && audio.play(), updatePlaylistActive() } }
-function applyBoostSettings() { gainNode && (gainNode.gain.value = volumeEnhance * boostLevel, filters.length > 0 && "lowshelf" === filters[0].type && (filters[0].gain.value = bassLevelVal, document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%"), saveSettings()) }
-function createReverbBuffer(e, t = 2.8, n = 3.5) { let r = e.sampleRate, o = Math.floor(r * t), i = e.createBuffer(2, o, r); for (let s = 0; s < 2; s++) { let e = i.getChannelData(s); for (let t = 0; t < o; t++) { let o = t / r, a = Math.exp(-o * n), l = (2 * Math.random() - 1) * .6 * a, c = 0 === t ? 1 : l; 1 === s && t > .07 * r && (c += e[t - Math.floor(.07 * r)] * .35), e[t] = Math.max(-1, Math.min(1, c * a)) * .9 } } return i }
-async function initAudioContext() { if (!isAudioInitialized) try { audioContext = new(window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 }), "suspended" === audioContext.state && await audioContext.resume(), source = audioContext.createMediaElementSource(audio), gainNode = audioContext.createGain(), analyser = audioContext.createAnalyser(), analyser.fftSize = 2048, analyser.smoothingTimeConstant = .7; let e = [80, 32, 50, 80, 125, 200, 315, 500, 800, 1200, 2000, 3150, 5000, 8000, 12500, 16000, 18000, 20000]; filters = e.map((e, t) => { let n = audioContext.createBiquadFilter(); return 0 === t ? n.type = "lowshelf" : t === e.length - 1 ? n.type = "highshelf" : n.type = "peaking", n.frequency.value = e, n.Q.value = .7, n.gain.value = 0, n }), source.connect(gainNode); let t = gainNode; filters.forEach(e => { t.connect(e), t = e }); let n = t; convolverNode = audioContext.createConvolver(), convolverNode.buffer = createReverbBuffer(audioContext, 2.8, 3.5), wetGain = audioContext.createGain(), dryGain = audioContext.createGain(), mixGain = audioContext.createGain(), wetGain.gain.value = 1.2 * reverbSliderValue, dryGain.gain.value = .8, n.connect(dryGain), dryGain.connect(mixGain), n.connect(convolverNode), convolverNode.connect(wetGain), wetGain.connect(mixGain), mixGain.connect(analyser), analyser.connect(audioContext.destination), isAudioInitialized = !0, applyBoostSettings(), loadSettings(), startSpectrumLoop(), startVisualizerLoop() } catch (e) { console.error("فشل تهيئة الصوت:", e) } }
-function startSpectrumLoop() { if (!spectrumAnimId) { let e = new Uint8Array(analyser.frequencyBinCount); ! function t() { if (analyser && spectrumCanvas) { analyser.getByteFrequencyData(e); let n = spectrumCanvas.clientWidth, r = spectrumCanvas.clientHeight; spectrumCanvas.width = n, spectrumCanvas.height = r, ctx.clearRect(0, 0, n, r); for (let o = 0; o < 80; o++) { let i = 20 * Math.pow(1e3, o / 79), s = Math.floor(i / (audioContext.sampleRate / 2) * analyser.frequencyBinCount); s = Math.min(analyser.frequencyBinCount - 1, Math.max(0, s)); let a = e[s] / 255, l = a * r, c = 100 + 155 * a; ctx.fillStyle = "rgb(" + c + ", " + (c - 40) + ", 240)", ctx.fillRect(o * (n / 80), r - l, n / 80 - 1.5, l) } spectrumAnimId = requestAnimationFrame(t) } }() } }
-function stopSpectrumLoop() { spectrumAnimId && (cancelAnimationFrame(spectrumAnimId), spectrumAnimId = null) }
-function startVisualizerLoop() { if (!visualizerAnimId) { let e = new Uint8Array(analyser.frequencyBinCount); ! function t() { if (analyser && isPlaying) { analyser.getByteFrequencyData(e); for (let n = 0; n < visualizerBars.length; n++) { let r = Math.floor(n / visualizerBars.length * analyser.frequencyBinCount), o = e[r] / 255 * 45 + 5; visualizerBars[n].style.height = o + "px"; let i = o / 50; visualizerBars[n].style.background = "linear-gradient(to top, #8A8AA8, rgb(" + (180 + 75 * i) + ", " + (180 + 75 * i) + ", 255))" } visualizerAnimId = requestAnimationFrame(t) } else visualizerAnimId = null }() } }
-function stopVisualizerLoop() { visualizerAnimId && (cancelAnimationFrame(visualizerAnimId), visualizerAnimId = null) }
-playPauseBtn.onclick = async () => { if (!songs.length) alert("أضف أغاني أولا"); else { isAudioInitialized || await initAudioContext(), isPlaying ? (userPaused = !0, stopAutoResume(), audio.pause(), playPauseBtn.innerHTML = "▶️", stopAlbumRotation(), enableSlow3D(!1), stopVisualizerLoop(), stopSpectrumLoop(), stopWaveformProgress()) : (userPaused = !1, audioContext && "suspended" === audioContext.state && await audioContext.resume(), audio.play(), playPauseBtn.innerHTML = "⏸️", startAlbumRotation(), enableSlow3D(!0), startVisualizerLoop(), startSpectrumLoop(), startWaveformProgress()), isPlaying = !isPlaying, updateMediaSession() } }, audio.addEventListener("ended", () => { isRepeating ? (audio.currentTime = 0, audio.play()) : playNext() }), audio.addEventListener("pause", () => { userPaused || !autoResumeEnabled || !isPlaying || !songs.length || startAutoResume() }), audio.addEventListener("play", () => { userPaused = !1, stopAutoResume() }), volumeSlider.addEventListener("click", e => { let t = Math.min(1, Math.max(0, e.offsetX / volumeSlider.clientWidth)); audio.volume = t, volumeProgress.style.width = 100 * t + "%", volumeEnhance = t, applyBoostSettings() }), repeatBtn.onclick = () => { isRepeating = !isRepeating, repeatBtn.classList.toggle("active", isRepeating) }, shuffleBtn.onclick = () => { isShuffling = !isShuffling, shuffleBtn.classList.toggle("active", isShuffling) }, nextBtn.onclick = () => { playNext(), isPlaying && audio.play() }, prevBtn.onclick = () => { songs.length && (currentIndex--, currentIndex < 0 && (currentIndex = songs.length - 1), loadSong(currentIndex), isPlaying && audio.play(), updatePlaylistActive()) };
-let boostActive = !1;
+    let prev = index > 0 ? wordTimeline[index - 1].word : "";
+    let curr = (index >= 0 && index < wordTimeline.length) ? wordTimeline[index].word : "🎤";
+    let next = (index >= 0 && index < wordTimeline.length - 1) ? wordTimeline[index + 1].word : "";
+
+    if (lastStageIndex === -1) {
+        prevWordDiv.textContent = prev;
+        currentWordDiv.textContent = curr;
+        nextWordDiv.textContent = next;
+        prevWordDiv.style.opacity = prev ? "0.45" : "0";
+        currentWordDiv.style.opacity = "1";
+        nextWordDiv.style.opacity = next ? "0.45" : "0";
+        return;
+    }
+    if (prev) {
+        prevWordDiv.textContent = prev;
+        prevWordDiv.classList.add("prev-exit");
+    } else {
+        prevWordDiv.textContent = "";
+        prevWordDiv.style.opacity = "0";
+    }
+    currentWordDiv.textContent = curr;
+    currentWordDiv.classList.add("current-enter");
+    if (next) {
+        nextWordDiv.textContent = next;
+        nextWordDiv.classList.add("next-enter");
+    } else {
+        nextWordDiv.textContent = "";
+        nextWordDiv.style.opacity = "0";
+    }
+    if (stageTransitionTimeout) clearTimeout(stageTransitionTimeout);
+    stageTransitionTimeout = setTimeout(() => {
+        prevWordDiv.classList.remove("prev-exit");
+        currentWordDiv.classList.remove("current-enter");
+        nextWordDiv.classList.remove("next-enter");
+        prevWordDiv.style.opacity = prev ? "0.45" : "0";
+        currentWordDiv.style.opacity = "1";
+        nextWordDiv.style.opacity = next ? "0.45" : "0";
+    }, 500);
+}
+
+audio.addEventListener("timeupdate", () => {
+    if (audio.duration) {
+        currentTimeSpan.textContent = formatTime(audio.currentTime);
+        durationSpan.textContent = formatTime(audio.duration);
+    }
+    updateLyricsByTime(audio.currentTime);
+});
+
+function enableSlow3D(enable) {
+    if (enable) {
+        lyricsWordDiv.classList.add("rotate-3d-active");
+    } else {
+        lyricsWordDiv.classList.remove("rotate-3d-active");
+    }
+}
+
+function switchUIMode() {
+    if (currentMode === "stage") {
+        lyricsWordDiv.style.visibility = "hidden";
+        lyricsWordDiv.style.position = "absolute";
+        stageContainer.style.visibility = "visible";
+        stageContainer.style.position = "relative";
+        [prevWordDiv, currentWordDiv, nextWordDiv].forEach(el => {
+            el.classList.remove("prev-exit", "current-enter", "next-enter");
+        });
+    } else {
+        lyricsWordDiv.style.visibility = "visible";
+        lyricsWordDiv.style.position = "relative";
+        stageContainer.style.visibility = "hidden";
+        stageContainer.style.position = "absolute";
+    }
+}
+
+function toggleMode() {
+    if (currentMode === "word") {
+        currentMode = "sentence";
+        toggleModeBtn.innerHTML = "🔁 وضع: جملة";
+    } else if (currentMode === "sentence") {
+        currentMode = "stage";
+        toggleModeBtn.innerHTML = "🔁 وضع: مسرح";
+    } else {
+        currentMode = "word";
+        toggleModeBtn.innerHTML = "🔁 وضع: كلمة";
+    }
+    lastStageIndex = -1;
+    switchUIMode();
+    enableSlow3D(isPlaying);
+    if (audio && !isNaN(audio.currentTime)) {
+        updateLyricsByTime(audio.currentTime);
+    }
+}
+
+function clearSRT() {
+    let songId = getCurrentSongId();
+    if (songId) songLyricsMap.delete(songId);
+    srtCues = [];
+    wordTimeline = [];
+    rawLyricsContent = null;
+    rawLyricsFileName = null;
+    srtInput.value = "";
+    srtStatusMsg.innerHTML = "تم مسح الترجمة - ارفع SRT أو LRC جديد";
+    if (currentMode === "stage") {
+        prevWordDiv.textContent = "";
+        currentWordDiv.textContent = "📄 تم المسح";
+        nextWordDiv.textContent = "";
+    } else {
+        lyricsWordDiv.innerText = "📄 تم المسح";
+    }
+    lastStageIndex = -1;
+}
+
+/**
+ * معالجة ملف الترجمة المُرفع
+ */
+function processLyricsFile(content, fileName) {
+    let songId = getCurrentSongId();
+    // استخدام مدة صوتية صالحة كقيمة افتراضية
+    let duration = (audio.duration && isFinite(audio.duration) && audio.duration > 0) ? audio.duration : 300;
+    let result = loadLyricsData(content, fileName, duration);
+
+    if (result && songId) {
+        songLyricsMap.set(songId, {
+            cues: result.cues,
+            words: result.words,
+            content: content,
+            fileName: fileName
+        });
+        srtCues = result.cues;
+        wordTimeline = result.words;
+        rawLyricsContent = content;
+        rawLyricsFileName = fileName;
+        srtStatusMsg.innerHTML = "✅ تم تحميل وحفظ " + result.cues.length + " مقطع (" + result.words.length + " كلمة) - " + fileName;
+        lastStageIndex = -1;
+        if (audio && !isNaN(audio.currentTime)) {
+            updateLyricsByTime(audio.currentTime);
+        }
+    } else {
+        srtStatusMsg.innerHTML = "❌ خطأ في تنسيق الملف";
+        if (!songId) srtStatusMsg.innerHTML += " | أضف أغنية أولاً";
+    }
+}
+
+// رفع ملف SRT/LRC عبر الزر
+srtInput.addEventListener("change", e => {
+    let file = e.target.files[0];
+    if (file) {
+        let reader = new FileReader();
+        reader.onload = function(ev) {
+            processLyricsFile(ev.target.result, file.name);
+        };
+        reader.readAsText(file, "UTF-8");
+    }
+});
+
+clearSrtBtn.addEventListener("click", clearSRT);
+toggleModeBtn.addEventListener("click", toggleMode);
+
+function getCurrentSongId() {
+    return songs[currentIndex]?.src || null;
+}
+
+function loadLyricsForCurrentSong() {
+    let songId = getCurrentSongId();
+    if (songId && songLyricsMap.has(songId)) {
+        let saved = songLyricsMap.get(songId);
+        srtCues = saved.cues;
+        wordTimeline = saved.words;
+        rawLyricsContent = saved.content;
+        rawLyricsFileName = saved.fileName;
+        srtStatusMsg.innerHTML = "✅ ترجمة محفوظة: " + saved.cues.length + " مقطع (" + saved.words.length + " كلمة) - " + saved.fileName;
+    } else {
+        srtCues = [];
+        wordTimeline = [];
+        rawLyricsContent = null;
+        rawLyricsFileName = null;
+        srtStatusMsg.innerHTML = "🎤 لا توجد ترجمة لهذه الأغنية.";
+    }
+    lastStageIndex = -1;
+    updateLyricsByTime(audio.currentTime || 0);
+    switchUIMode();
+}
+
+// ========== دوال قائمة التشغيل ==========
+function getAudioDuration(file) {
+    return new Promise(resolve => {
+        let tempAudio = new Audio();
+        let url = URL.createObjectURL(file);
+        tempAudio.src = url;
+        tempAudio.addEventListener("loadedmetadata", () => {
+            let dur = tempAudio.duration;
+            URL.revokeObjectURL(url);
+            resolve(isNaN(dur) ? 0 : dur);
+        });
+        tempAudio.addEventListener("error", () => {
+            URL.revokeObjectURL(url);
+            resolve(0);
+        });
+    });
+}
+
+function updatePlaylistCount() {
+    playlistCountSpan.textContent = songs.length;
+}
+
+function renderPlaylistItem(index) {
+    let song = songs[index];
+    let div = document.createElement("div");
+    div.className = "playlist-item";
+    div.draggable = true;
+    div.dataset.index = index;
+    let durationStr = song.duration > 0 ? formatTime(song.duration) : "--:--";
+    div.innerHTML = `
+        <span class="drag-handle" title="اسحب لإعادة الترتيب">⋮⋮</span>
+        <span class="song-index">${index + 1}</span>
+        <span class="song-name" title="${song.title}">${song.title}</span>
+        <span class="song-duration">${durationStr}</span>
+        <button class="delete-song-btn" title="حذف الأغنية" data-index="${index}">×</button>
+    `;
+    if (index === currentIndex) div.classList.add("active");
+
+    div.addEventListener("click", e => {
+        if (!e.target.closest(".delete-song-btn") && !e.target.closest(".drag-handle")) {
+            currentIndex = index;
+            loadSong(currentIndex);
+            if (isPlaying) audio.play();
+            updatePlaylistActive();
+        }
+    });
+
+    div.querySelector(".delete-song-btn").addEventListener("click", e => {
+        e.stopPropagation();
+        deleteSong(index);
+    });
+
+    // السحب والإفلات (فأرة)
+    div.addEventListener("dragstart", e => {
+        e.dataTransfer.setData("text/plain", index.toString());
+        div.classList.add("dragging");
+    });
+    div.addEventListener("dragend", () => div.classList.remove("dragging"));
+    div.addEventListener("dragover", e => {
+        e.preventDefault();
+        div.classList.add("drag-over");
+    });
+    div.addEventListener("dragleave", () => div.classList.remove("drag-over"));
+    div.addEventListener("drop", e => {
+        e.preventDefault();
+        div.classList.remove("drag-over");
+        let from = parseInt(e.dataTransfer.getData("text/plain"), 10);
+        let to = parseInt(div.dataset.index, 10);
+        if (from !== to && !isNaN(from) && !isNaN(to)) {
+            moveSong(from, to);
+        }
+    });
+
+    // السحب للمس
+    let touchStartY = 0;
+    div.querySelector(".drag-handle").addEventListener("touchstart", e => {
+        touchStartY = e.touches[0].clientY;
+        div.style.transition = "none";
+    });
+    div.querySelector(".drag-handle").addEventListener("touchmove", e => {
+        let diff = e.touches[0].clientY - touchStartY;
+        div.style.transform = "translateY(" + diff + "px)";
+        div.style.zIndex = "10";
+        div.style.opacity = "0.8";
+        let items = [...playlistDiv.querySelectorAll(".playlist-item")];
+        items.forEach(item => item.classList.remove("drag-over"));
+        let target = items.find(item => {
+            let rect = item.getBoundingClientRect();
+            return e.touches[0].clientY >= rect.top && e.touches[0].clientY <= rect.bottom && item !== div;
+        });
+        if (target) target.classList.add("drag-over");
+    });
+    div.querySelector(".drag-handle").addEventListener("touchend", e => {
+        div.style.transition = "all 0.2s";
+        div.style.transform = "";
+        div.style.zIndex = "";
+        div.style.opacity = "";
+        let items = [...playlistDiv.querySelectorAll(".playlist-item")];
+        items.forEach(item => item.classList.remove("drag-over"));
+        let target = items.find(item => {
+            let rect = item.getBoundingClientRect();
+            return e.changedTouches[0].clientY >= rect.top && e.changedTouches[0].clientY <= rect.bottom && item !== div;
+        });
+        if (target) {
+            let from = parseInt(div.dataset.index, 10);
+            let to = parseInt(target.dataset.index, 10);
+            if (!isNaN(from) && !isNaN(to) && from !== to) {
+                moveSong(from, to);
+            }
+        }
+    });
+
+    return div;
+}
+
+function refreshPlaylist() {
+    playlistDiv.innerHTML = "";
+    if (songs.length === 0) {
+        playlistDiv.innerHTML = '<div class="playlist-empty">🎵 لا توجد أغانٍ - أضف ملفات موسيقية</div>';
+    } else {
+        songs.forEach((_, i) => playlistDiv.appendChild(renderPlaylistItem(i)));
+    }
+    updatePlaylistCount();
+}
+
+function updatePlaylistActive() {
+    document.querySelectorAll(".playlist-item").forEach((item, i) => {
+        if (i === currentIndex) item.classList.add("active");
+        else item.classList.remove("active");
+    });
+}
+
+function deleteSong(index) {
+    if (index < 0 || index >= songs.length) return;
+    let song = songs[index];
+    if (song.src && allObjectURLs.includes(song.src)) {
+        let currentSrc = songs[currentIndex]?.src;
+        if (song.src !== currentSrc) {
+            URL.revokeObjectURL(song.src);
+            allObjectURLs = allObjectURLs.filter(u => u !== song.src);
+        }
+    }
+    let songId = song.src;
+    if (songId) songLyricsMap.delete(songId);
+
+    songs.splice(index, 1);
+    if (songs.length === 0) {
+        currentIndex = 0;
+        audio.src = "";
+        songTitleSpan.textContent = "🎵 أضف موسيقى";
+        songArtistSpan.textContent = "فنان فضي";
+        albumImage.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E";
+        waveformData = null;
+        drawWaveform(0, 1);
+        srtCues = [];
+        wordTimeline = [];
+        updateMediaSession();
+    } else {
+        if (currentIndex >= songs.length) currentIndex = songs.length - 1;
+        if (index <= currentIndex && currentIndex > 0) currentIndex--;
+        loadSong(currentIndex);
+        if (isPlaying) audio.play();
+    }
+    refreshPlaylist();
+    updatePlaylistActive();
+    showToast("🗑 تم حذف الأغنية");
+}
+
+function moveSong(from, to) {
+    if (from === to) return;
+    let item = songs.splice(from, 1)[0];
+    songs.splice(to, 0, item);
+    if (currentIndex === from) currentIndex = to;
+    else if (from < currentIndex && to >= currentIndex) currentIndex--;
+    else if (from > currentIndex && to <= currentIndex) currentIndex++;
+    refreshPlaylist();
+    updatePlaylistActive();
+}
+
+function clearAllPlaylist() {
+    if (songs.length === 0) return;
+    if (!confirm("هل أنت متأكد من مسح قائمة التشغيل بالكامل؟")) return;
+    let currentSrc = songs[currentIndex]?.src;
+    for (let song of songs) {
+        if (song.src && song.src !== currentSrc && allObjectURLs.includes(song.src)) {
+            URL.revokeObjectURL(song.src);
+        }
+    }
+    allObjectURLs = allObjectURLs.filter(u => u === currentSrc);
+    songLyricsMap.clear();
+    songs = [];
+    currentIndex = 0;
+    userPaused = true;
+    stopAutoResume();
+    audio.pause();
+    isPlaying = false;
+    playPauseBtn.innerHTML = "▶️";
+    stopAlbumRotation();
+    enableSlow3D(false);
+    stopVisualizerLoop();
+    stopSpectrumLoop();
+    stopWaveformProgress();
+    songTitleSpan.textContent = "🎵 أضف موسيقى";
+    songArtistSpan.textContent = "فنان فضي";
+    waveformData = null;
+    srtCues = [];
+    wordTimeline = [];
+    updateMediaSession();
+    refreshPlaylist();
+    updatePlaylistActive();
+    showToast("🗑 تم مسح قائمة التشغيل");
+}
+
+function exportPlaylist() {
+    if (songs.length === 0) {
+        showToast("⚠️ لا توجد أغانٍ للتصدير");
+        return;
+    }
+    let data = songs.map((s, i) => ({
+        index: i,
+        title: s.title,
+        artist: s.artist,
+        duration: s.duration,
+        fileName: s.title
+    }));
+    let json = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), songs: data }, null, 2);
+    let blob = new Blob([json], { type: "application/json" });
+    let url = URL.createObjectURL(blob);
+    let a = document.createElement("a");
+    a.href = url;
+    a.download = "playlist-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("💾 تم تصدير قائمة التشغيل");
+}
+
+function importPlaylist(file) {
+    let reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            let data = JSON.parse(e.target.result);
+            if (!data.songs || !Array.isArray(data.songs)) throw new Error("تنسيق غير صالح");
+            showToast("📥 تم استيراد " + data.songs.length + " أغنية (المسارات المرجعية فقط - أعد إضافة الملفات الصوتية)");
+            alert("تم استيراد بيانات قائمة التشغيل. ملاحظة: لا يمكن استعادة الملفات الصوتية الفعلية، يجب إعادة إضافتها يدوياً.");
+        } catch (err) {
+            showToast("❌ فشل استيراد الملف: تنسيق غير صالح");
+        }
+    };
+    reader.readAsText(file, "UTF-8");
+}
+
+async function addSongs(files) {
+    for (let file of files) {
+        let url = URL.createObjectURL(file);
+        allObjectURLs.push(url);
+        let duration = await getAudioDuration(file);
+        songs.push({
+            title: file.name.replace(/\.[^/.]+$/, ""),
+            artist: "فنان فضي",
+            src: url,
+            cover: "",
+            duration: duration
+        });
+    }
+    refreshPlaylist();
+    if (songs.length > 0 && !audio.src) {
+        currentIndex = 0;
+        loadSong(0);
+        if (!isAudioInitialized) initAudioContext();
+        updatePlaylistActive();
+    }
+    updatePlaylistCount();
+}
+
+function stopAlbumRotation() { albumContainer.classList.remove("rotating"); }
+function startAlbumRotation() { if (isPlaying) albumContainer.classList.add("rotating"); }
+function showLoading() { loadingOverlay.style.display = "flex"; }
+function hideLoading() { loadingOverlay.style.display = "none"; }
+
+async function loadSong(index) {
+    if (!songs[index]) return;
+    showLoading();
+    audio.src = songs[index].src;
+    songTitleSpan.textContent = songs[index].title;
+    songArtistSpan.textContent = songs[index].artist || "فنان فضي";
+    albumImage.src = songs[index].cover || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E";
+    waveformData = null;
+    if (songs[index].src) loadAudioBuffer(songs[index].src);
+    loadLyricsForCurrentSong();
+    updateMediaSession();
+    audio.oncanplay = () => hideLoading();
+    audio.onerror = () => {
+        hideLoading();
+        srtStatusMsg.innerHTML = "⚠️ خطأ في تحميل الملف الصوتي";
+    };
+    if (isPlaying) {
+        audio.play().catch(() => {});
+        enableSlow3D(true);
+    } else {
+        enableSlow3D(false);
+    }
+    updateLyricsByTime(0);
+    setTimeout(() => {
+        if (waveformData) drawWaveform(0, audio.duration || 1);
+    }, 300);
+    updatePlaylistActive();
+    if (songs[index].duration <= 0 && audio.duration && !isNaN(audio.duration)) {
+        songs[index].duration = audio.duration;
+        refreshPlaylist();
+        updatePlaylistActive();
+    }
+}
+
+function playNext() {
+    if (!songs.length) return;
+    if (isShuffling) {
+        let next;
+        do {
+            next = Math.floor(Math.random() * songs.length);
+        } while (next === currentIndex && songs.length > 1);
+        currentIndex = next;
+    } else {
+        currentIndex++;
+        if (currentIndex >= songs.length) currentIndex = 0;
+    }
+    loadSong(currentIndex);
+    if (isPlaying) audio.play();
+    updatePlaylistActive();
+}
+
+function applyBoostSettings() {
+    if (gainNode) {
+        gainNode.gain.value = volumeEnhance * boostLevel;
+        if (filters.length > 0 && filters[0].type === "lowshelf") {
+            filters[0].gain.value = bassLevelVal;
+            document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
+        }
+        saveSettings();
+    }
+}
+
+function createReverbBuffer(ctx, duration = 2.8, decay = 3.5) {
+    let sampleRate = ctx.sampleRate;
+    let length = Math.floor(sampleRate * duration);
+    let buffer = ctx.createBuffer(2, length, sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+        let channel = buffer.getChannelData(ch);
+        for (let i = 0; i < length; i++) {
+            let t = i / sampleRate;
+            let envelope = Math.exp(-t * decay);
+            let noise = (Math.random() * 2 - 1) * 0.6 * envelope;
+            let impulse = (i === 0) ? 1 : noise;
+            if (ch === 1 && i > 0.07 * sampleRate) {
+                impulse += channel[i - Math.floor(0.07 * sampleRate)] * 0.35;
+            }
+            channel[i] = Math.max(-1, Math.min(1, impulse * envelope)) * 0.9;
+        }
+    }
+    return buffer;
+}
+
+async function initAudioContext() {
+    if (isAudioInitialized) return;
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+        if (audioContext.state === "suspended") await audioContext.resume();
+        source = audioContext.createMediaElementSource(audio);
+        gainNode = audioContext.createGain();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.7;
+
+        let freqs = [80, 32, 50, 80, 125, 200, 315, 500, 800, 1200, 2000, 3150, 5000, 8000, 12500, 16000, 18000, 20000];
+        filters = freqs.map((freq, i) => {
+            let filter = audioContext.createBiquadFilter();
+            if (i === 0) filter.type = "lowshelf";
+            else if (i === freqs.length - 1) filter.type = "highshelf";
+            else filter.type = "peaking";
+            filter.frequency.value = freq;
+            filter.Q.value = 0.7;
+            filter.gain.value = 0;
+            return filter;
+        });
+
+        source.connect(gainNode);
+        let currentNode = gainNode;
+        filters.forEach(f => {
+            currentNode.connect(f);
+            currentNode = f;
+        });
+
+        convolverNode = audioContext.createConvolver();
+        convolverNode.buffer = createReverbBuffer(audioContext, 2.8, 3.5);
+        wetGain = audioContext.createGain();
+        dryGain = audioContext.createGain();
+        mixGain = audioContext.createGain();
+        wetGain.gain.value = 1.2 * reverbSliderValue;
+        dryGain.gain.value = 0.8;
+
+        currentNode.connect(dryGain);
+        dryGain.connect(mixGain);
+        currentNode.connect(convolverNode);
+        convolverNode.connect(wetGain);
+        wetGain.connect(mixGain);
+        mixGain.connect(analyser);
+        analyser.connect(audioContext.destination);
+
+        isAudioInitialized = true;
+        applyBoostSettings();
+        loadSettings();
+        startSpectrumLoop();
+        startVisualizerLoop();
+    } catch (e) {
+        console.error("فشل تهيئة الصوت:", e);
+    }
+}
+
+function startSpectrumLoop() {
+    if (spectrumAnimId) return;
+    let dataArray = new Uint8Array(analyser.frequencyBinCount);
+    function loop() {
+        if (!analyser || !spectrumCanvas) return;
+        analyser.getByteFrequencyData(dataArray);
+        let w = spectrumCanvas.clientWidth;
+        let h = spectrumCanvas.clientHeight;
+        spectrumCanvas.width = w;
+        spectrumCanvas.height = h;
+        ctx.clearRect(0, 0, w, h);
+        for (let i = 0; i < 80; i++) {
+            let freq = 20 * Math.pow(1000, i / 79);
+            let bin = Math.floor(freq / (audioContext.sampleRate / 2) * analyser.frequencyBinCount);
+            bin = Math.min(analyser.frequencyBinCount - 1, Math.max(0, bin));
+            let value = dataArray[bin] / 255;
+            let barHeight = value * h;
+            let r = 100 + 155 * value;
+            ctx.fillStyle = "rgb(" + r + ", " + (r - 40) + ", 240)";
+            ctx.fillRect(i * (w / 80), h - barHeight, w / 80 - 1.5, barHeight);
+        }
+        spectrumAnimId = requestAnimationFrame(loop);
+    }
+    loop();
+}
+
+function stopSpectrumLoop() {
+    if (spectrumAnimId) {
+        cancelAnimationFrame(spectrumAnimId);
+        spectrumAnimId = null;
+    }
+}
+
+function startVisualizerLoop() {
+    if (visualizerAnimId) return;
+    let dataArray = new Uint8Array(analyser.frequencyBinCount);
+    function loop() {
+        if (!analyser || !isPlaying) {
+            visualizerAnimId = null;
+            return;
+        }
+        analyser.getByteFrequencyData(dataArray);
+        for (let i = 0; i < visualizerBars.length; i++) {
+            let bin = Math.floor(i / visualizerBars.length * analyser.frequencyBinCount);
+            let val = dataArray[bin] / 255 * 45 + 5;
+            visualizerBars[i].style.height = val + "px";
+            let intensity = val / 50;
+            visualizerBars[i].style.background = "linear-gradient(to top, #8A8AA8, rgb(" + (180 + 75 * intensity) + ", " + (180 + 75 * intensity) + ", 255))";
+        }
+        visualizerAnimId = requestAnimationFrame(loop);
+    }
+    loop();
+}
+
+function stopVisualizerLoop() {
+    if (visualizerAnimId) {
+        cancelAnimationFrame(visualizerAnimId);
+        visualizerAnimId = null;
+    }
+}
+
+// ========== أزرار التحكم الأساسية ==========
+playPauseBtn.onclick = async () => {
+    if (!songs.length) {
+        alert("أضف أغاني أولا");
+        return;
+    }
+    if (!isAudioInitialized) await initAudioContext();
+    if (isPlaying) {
+        userPaused = true;
+        stopAutoResume();
+        audio.pause();
+        playPauseBtn.innerHTML = "▶️";
+        stopAlbumRotation();
+        enableSlow3D(false);
+        stopVisualizerLoop();
+        stopSpectrumLoop();
+        stopWaveformProgress();
+    } else {
+        userPaused = false;
+        if (audioContext && audioContext.state === "suspended") await audioContext.resume();
+        audio.play();
+        playPauseBtn.innerHTML = "⏸️";
+        startAlbumRotation();
+        enableSlow3D(true);
+        startVisualizerLoop();
+        startSpectrumLoop();
+        startWaveformProgress();
+    }
+    isPlaying = !isPlaying;
+    updateMediaSession();
+};
+
+audio.addEventListener("ended", () => {
+    if (isRepeating) {
+        audio.currentTime = 0;
+        audio.play();
+    } else {
+        playNext();
+    }
+});
+
+audio.addEventListener("pause", () => {
+    if (!userPaused && autoResumeEnabled && isPlaying && songs.length) {
+        startAutoResume();
+    }
+});
+
+audio.addEventListener("play", () => {
+    userPaused = false;
+    stopAutoResume();
+});
+
+volumeSlider.addEventListener("click", e => {
+    let ratio = Math.min(1, Math.max(0, e.offsetX / volumeSlider.clientWidth));
+    audio.volume = ratio;
+    volumeProgress.style.width = (100 * ratio) + "%";
+    volumeEnhance = ratio;
+    applyBoostSettings();
+});
+
+repeatBtn.onclick = () => {
+    isRepeating = !isRepeating;
+    repeatBtn.classList.toggle("active", isRepeating);
+};
+
+shuffleBtn.onclick = () => {
+    isShuffling = !isShuffling;
+    shuffleBtn.classList.toggle("active", isShuffling);
+};
+
+nextBtn.onclick = () => {
+    playNext();
+    if (isPlaying) audio.play();
+};
+
+prevBtn.onclick = () => {
+    if (!songs.length) return;
+    currentIndex--;
+    if (currentIndex < 0) currentIndex = songs.length - 1;
+    loadSong(currentIndex);
+    if (isPlaying) audio.play();
+    updatePlaylistActive();
+};
+
+// ========== رقاقات الشريط العلوي ==========
+let boostActive = false;
 const boostChip = document.getElementById("boostChip");
-boostChip.onclick = () => { boostActive ? (boostLevel = 1, boostActive = !1, boostChip.classList.remove("active-chip")) : (boostLevel = 1.8, boostActive = !0, boostChip.classList.add("active-chip")), applyBoostSettings(); let e = document.getElementById("boostEnhancementSlider"); e && (e.value = 50 * (boostLevel - 1)), document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1) };
-let powerSave = !1;
+boostChip.onclick = () => {
+    if (boostActive) {
+        boostLevel = 1;
+        boostActive = false;
+        boostChip.classList.remove("active-chip");
+    } else {
+        boostLevel = 1.8;
+        boostActive = true;
+        boostChip.classList.add("active-chip");
+    }
+    applyBoostSettings();
+    let slider = document.getElementById("boostEnhancementSlider");
+    if (slider) slider.value = 50 * (boostLevel - 1);
+    document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1);
+};
+
+let powerSave = false;
 const powerSaveChip = document.getElementById("powerSaveChip");
-powerSaveChip.onclick = () => { powerSave = !powerSave, document.body.classList.toggle("power-save-mode", powerSave), powerSaveChip.classList.toggle("active-chip", powerSave), powerSave && isCameraRotating && cameraToggleChip.click(), powerSave ? (stopAlbumRotation(), stopVisualizerLoop(), stopSpectrumLoop()) : isPlaying && (startVisualizerLoop(), startSpectrumLoop()) };
+powerSaveChip.onclick = () => {
+    powerSave = !powerSave;
+    document.body.classList.toggle("power-save-mode", powerSave);
+    powerSaveChip.classList.toggle("active-chip", powerSave);
+    if (powerSave && isCameraRotating) cameraToggleChip.click();
+    if (powerSave) {
+        stopAlbumRotation();
+        stopVisualizerLoop();
+        stopSpectrumLoop();
+    } else if (isPlaying) {
+        startVisualizerLoop();
+        startSpectrumLoop();
+    }
+};
+
 const cameraToggleChip = document.getElementById("cameraToggleChip");
-cameraToggleChip.onclick = () => { if (powerSave) showToast("وضع توفير الطاقة مفعّل"); else { isCameraRotating = !isCameraRotating, isCameraRotating ? (cameraToggleChip.classList.add("active-chip"), cameraToggleChip.textContent = "⏹️", function e() { isCameraRotating && (rotationAngle += .6, playerSection.style.transform = "rotateY(" + rotationAngle + "deg) rotateX(4deg)", cameraId = requestAnimationFrame(e)) }()) : (cancelAnimationFrame(cameraId), playerSection.style.transform = "none", cameraToggleChip.classList.remove("active-chip"), cameraToggleChip.textContent = "🎥") } };
+cameraToggleChip.onclick = () => {
+    if (powerSave) {
+        showToast("وضع توفير الطاقة مفعّل");
+        return;
+    }
+    isCameraRotating = !isCameraRotating;
+    if (isCameraRotating) {
+        cameraToggleChip.classList.add("active-chip");
+        cameraToggleChip.textContent = "⏹️";
+        function rotate() {
+            if (!isCameraRotating) return;
+            rotationAngle += 0.6;
+            playerSection.style.transform = "rotateY(" + rotationAngle + "deg) rotateX(4deg)";
+            cameraId = requestAnimationFrame(rotate);
+        }
+        rotate();
+    } else {
+        cancelAnimationFrame(cameraId);
+        playerSection.style.transform = "none";
+        cameraToggleChip.classList.remove("active-chip");
+        cameraToggleChip.textContent = "🎥";
+    }
+};
+
 const palaceToggleChip = document.getElementById("palaceToggleChip");
-palaceToggleChip.onclick = () => { palaceEnabled = !palaceEnabled, palaceControls.style.display = palaceEnabled ? "block" : "none", palaceToggleChip.classList.toggle("palace-active", palaceEnabled) };
-advancedToggleChip.onclick = () => { advancedPanelVisible = !advancedPanelVisible, advancedPanelVisible ? (advancedSection.classList.remove("hidden-panel"), advancedToggleChip.classList.add("active-chip")) : (advancedSection.classList.add("hidden-panel"), advancedToggleChip.classList.remove("active-chip")) };
-const infoChip = document.getElementById("infoChip"), infoModal = document.getElementById("infoModal"), closeInfoModalBtn = document.getElementById("closeInfoModal");
-infoChip.onclick = () => infoModal.classList.add("open"), closeInfoModalBtn.onclick = () => infoModal.classList.remove("open"), infoModal.addEventListener("click", e => { e.target === infoModal && infoModal.classList.remove("open") });
-const shortcutsFab = document.getElementById("shortcutsFab"), shortcutsModal = document.getElementById("shortcutsModal"), closeShortcutsModalBtn = document.getElementById("closeShortcutsModal");
-shortcutsFab.onclick = () => shortcutsModal.classList.add("open"), closeShortcutsModalBtn.onclick = () => shortcutsModal.classList.remove("open"), shortcutsModal.addEventListener("click", e => { e.target === shortcutsModal && shortcutsModal.classList.remove("open") });
-document.getElementById("fullscreenFab").onclick = () => { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen() };
-burgerMenuBtn.addEventListener("click", e => { e.stopPropagation(), burgerDropdown.classList.toggle("open"), burgerMenuBtn.classList.toggle("active") }), document.addEventListener("click", e => { burgerDropdown.contains(e.target) || e.target === burgerMenuBtn || (burgerDropdown.classList.remove("open"), burgerMenuBtn.classList.remove("active")) }), burgerDropdown.querySelectorAll(".dropdown-item").forEach(e => { e.addEventListener("click", () => { let t = e.dataset.action; burgerDropdown.classList.remove("open"), burgerMenuBtn.classList.remove("active"), "camera" === t ? cameraToggleChip.click() : "palace" === t ? palaceToggleChip.click() : "boost" === t ? boostChip.click() : "powersave" === t ? powerSaveChip.click() : "advanced" === t ? advancedToggleChip.click() : "info" === t ? infoChip.click() : "shortcuts" === t && shortcutsFab.click() }) }), document.getElementById("exportPlaylistBtn").addEventListener("click", exportPlaylist), document.getElementById("importPlaylistBtn").addEventListener("click", () => { document.getElementById("importPlaylistInput").click() }), document.getElementById("importPlaylistInput").addEventListener("change", e => { e.target.files[0] && (importPlaylist(e.target.files[0]), e.target.value = "") }), document.getElementById("clearPlaylistBtn").addEventListener("click", clearAllPlaylist), fileInput.addEventListener("change", e => { addSongs(Array.from(e.target.files)), fileInput.value = "" }), document.getElementById("imageInput").addEventListener("change", e => { if (e.target.files[0]) { let t = new FileReader; t.onload = e => { albumImage.src = e.target.result, songs[currentIndex] && (songs[currentIndex].cover = e.target.result), updateMediaSession() }, t.readAsDataURL(e.target.files[0]) } }), document.getElementById("applyPalaceEffect").addEventListener("click", () => { let e = parseFloat(document.getElementById("palaceSize").value) / 100; wetGain && dryGain && (wetGain.gain.value = Math.min(1.3, reverbSliderValue + .9 * e), dryGain.gain.value = Math.max(.4, .8 - .25 * e), document.getElementById("palaceStatus").innerHTML = "🏰 قصر نشط: صدى " + Math.round(100 * wetGain.gain.value) + "%") }), document.getElementById("resetPalaceEffect").addEventListener("click", () => { wetGain && dryGain && (wetGain.gain.value = 1.2 * reverbSliderValue, dryGain.gain.value = .8, document.getElementById("palaceStatus").innerHTML = "تم إعادة التعيين") }), document.getElementById("palaceSize").addEventListener("input", e => { document.getElementById("palaceSizeValue").innerText = e.target.value + "%" });
-const eqContainer = document.getElementById("eqBands"),
-    eqPresets = { flat: Array(18).fill(0), bass: [6, 5, 4, 3, 2, 1, 0, -1, -1, 0, 1, 1, 0, 0, 0, 0, 0, 0], vocal: [-2, -1, 0, 1, 2, 3, 3, 2, 1, 0, 0, -1, -2, -2, -2, -1, -1, 0], rock: [4, 4, 3, 2, 1, 0, 1, 2, 3, 3, 3, 2, 1, 0, 0, 0, 0, 0], electronic: [5, 5, 3, 1, 0, -1, 0, 1, 2, 3, 3, 2, 1, 1, 0, 0, 0, 0] };
+palaceToggleChip.onclick = () => {
+    palaceEnabled = !palaceEnabled;
+    palaceControls.style.display = palaceEnabled ? "block" : "none";
+    palaceToggleChip.classList.toggle("palace-active", palaceEnabled);
+};
 
-function buildEQ() { eqContainer.innerHTML = ""; let e = ["80", "32", "50", "80", "125", "200", "315", "500", "800", "1.2k", "2k", "3.15k", "5k", "8k", "12.5k", "16k", "18k", "20k"]; e.forEach((e, t) => { let n = document.createElement("div"); n.style.textAlign = "center", n.innerHTML = '<input type="range" class="eq-slider" min="-12" max="12" value="0" data-index="' + t + '">\n                             <div style="font-size:10px;">' + e + '</div><div style="font-size:10px;" id="eqVal' + t + '">0dB</div>', eqContainer.appendChild(n); let r = n.querySelector("input"); r.oninput = () => { let e = parseFloat(r.value); document.getElementById("eqVal" + t).innerText = e + "dB", filters[t] && (filters[t].gain.value = e), saveSettings() } }) }
-buildEQ(), document.querySelectorAll(".preset-btn").forEach(e => { e.onclick = () => { let t = e.dataset.preset; eqPresets[t] && (eqPresets[t].forEach((e, t) => { let n = document.querySelector('.eq-slider[data-index="' + t + '"]'); n && (n.value = e, n.dispatchEvent(new Event("input"))) }), saveSettings()) } }), document.getElementById("reverb").oninput = e => { reverbSliderValue = parseFloat(e.target.value) / 100, document.getElementById("reverbValue").innerText = e.target.value + "%", wetGain && (wetGain.gain.value = 1.2 * reverbSliderValue), saveSettings() }, document.getElementById("playbackSpeed").oninput = e => { audio.playbackRate = e.target.value / 100, document.getElementById("speedValue").innerText = e.target.value + "%" }, document.getElementById("volumeEnhancementSlider").oninput = e => { volumeEnhance = e.target.value / 100, document.getElementById("volumeValue").innerText = e.target.value + "%", applyBoostSettings() }, document.getElementById("boostEnhancementSlider").oninput = e => { boostLevel = 1 + 2 * (e.target.value / 100), document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1), applyBoostSettings(), boostActive = boostLevel > 1.1, boostChip.classList.toggle("active-chip", boostActive) }, document.getElementById("bassEnhancementSlider").oninput = e => { bassLevelVal = 24 * (e.target.value / 100), document.getElementById("bassValue").innerText = e.target.value + "%", applyBoostSettings() }, document.addEventListener("keydown", e => { if ("INPUT" !== e.target.tagName) switch (e.key) { case " ": e.preventDefault(), playPauseBtn.click(); break; case "ArrowRight": nextBtn.click(); break; case "ArrowLeft": prevBtn.click(); break; case "ArrowUp": audio.volume = Math.min(1, audio.volume + .05), volumeProgress.style.width = 100 * audio.volume + "%", volumeEnhance = audio.volume, applyBoostSettings(); break; case "ArrowDown": audio.volume = Math.max(0, audio.volume - .05), volumeProgress.style.width = 100 * audio.volume + "%", volumeEnhance = audio.volume, applyBoostSettings(); break; case "r": repeatBtn.click(); break; case "s": shuffleBtn.click(); break; case "b": boostChip.click(); break; case "c": cameraToggleChip.click(); break; case "p": powerSaveChip.click(); break; case "t": palaceToggleChip.click(); break; case "h": advancedToggleChip.click() } });
+advancedToggleChip.onclick = () => {
+    advancedPanelVisible = !advancedPanelVisible;
+    if (advancedPanelVisible) {
+        advancedSection.classList.remove("hidden-panel");
+        advancedToggleChip.classList.add("active-chip");
+    } else {
+        advancedSection.classList.add("hidden-panel");
+        advancedToggleChip.classList.remove("active-chip");
+    }
+};
 
-function saveSettings() { let e = { volumeEnhance: volumeEnhance, boostLevel: boostLevel, bassLevelVal: bassLevelVal, reverbSliderValue: reverbSliderValue, eqValues: filters.map(e => e.gain.value), volume: audio.volume }; localStorage.setItem("silverPlayerSettings_v2", JSON.stringify(e)) }
-function loadSettings() { let e = localStorage.getItem("silverPlayerSettings_v2"); if (e) try { let t = JSON.parse(e); volumeEnhance = t.volumeEnhance || .7, boostLevel = t.boostLevel || 1, bassLevelVal = t.bassLevelVal || 0, reverbSliderValue = t.reverbSliderValue || .3, audio.volume = t.volume || .7, volumeProgress.style.width = 100 * audio.volume + "%", document.getElementById("volumeEnhancementSlider").value = 100 * volumeEnhance, document.getElementById("volumeValue").innerText = Math.round(100 * volumeEnhance) + "%", document.getElementById("boostEnhancementSlider").value = 50 * (boostLevel - 1), document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1), document.getElementById("bassEnhancementSlider").value = bassLevelVal / 24 * 100, document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%", document.getElementById("reverb").value = 100 * reverbSliderValue, document.getElementById("reverbValue").innerText = Math.round(100 * reverbSliderValue) + "%", wetGain && (wetGain.gain.value = 1.2 * reverbSliderValue), t.eqValues && filters.length === t.eqValues.length && filters.forEach((e, n) => { e.gain.value = t.eqValues[n]; let r = document.querySelector('.eq-slider[data-index="' + n + '"]'); r && (r.value = t.eqValues[n], document.getElementById("eqVal" + n).innerText = t.eqValues[n] + "dB") }), applyBoostSettings() } catch (e) { console.warn("إعدادات غير صالحة") } }
+// ========== المودالات ==========
+const infoChip = document.getElementById("infoChip"),
+      infoModal = document.getElementById("infoModal"),
+      closeInfoModalBtn = document.getElementById("closeInfoModal");
+infoChip.onclick = () => infoModal.classList.add("open");
+closeInfoModalBtn.onclick = () => infoModal.classList.remove("open");
+infoModal.addEventListener("click", e => { if (e.target === infoModal) infoModal.classList.remove("open"); });
 
-function handleDragEnter(e) { document.body.classList.add("drag-over"), dropOverlay.classList.add("show") }
-function handleDragLeave(e) { e.relatedTarget && e.currentTarget.contains(e.relatedTarget) || (document.body.classList.remove("drag-over"), dropOverlay.classList.remove("show")) }
-function handleDragOver(e) { e.preventDefault(), e.stopPropagation() }
-function handleDrop(e) { e.preventDefault(), e.stopPropagation(), document.body.classList.remove("drag-over"), dropOverlay.classList.remove("show"); let t = Array.from(e.dataTransfer.files); if (t.length) { let e = [], n = null, r = ["mp3", "wav", "ogg", "aac", "flac", "m4a", "opus"], o = ["srt", "lrc", "txt"]; for (let i of t) { let t = i.name.split(".").pop().toLowerCase(); r.includes(t) ? e.push(i) : o.includes(t) && !n && (n = i) } e.length && addSongs(e), n && (new FileReader).readAsText(n, "UTF-8"), (new FileReader).onload = e => processLyricsFile(e.target.result, n.name) } }
-document.addEventListener("dragenter", handleDragEnter), document.addEventListener("dragleave", handleDragLeave), document.addEventListener("dragover", handleDragOver), document.addEventListener("drop", handleDrop);
+const shortcutsFab = document.getElementById("shortcutsFab"),
+      shortcutsModal = document.getElementById("shortcutsModal"),
+      closeShortcutsModalBtn = document.getElementById("closeShortcutsModal");
+shortcutsFab.onclick = () => shortcutsModal.classList.add("open");
+closeShortcutsModalBtn.onclick = () => shortcutsModal.classList.remove("open");
+shortcutsModal.addEventListener("click", e => { if (e.target === shortcutsModal) shortcutsModal.classList.remove("open"); });
 
-function createStars() { let e = document.getElementById("starsBackground"); for (let t = 0; t < 120; t++) { let n = document.createElement("div"); n.classList.add("star"), n.style.width = n.style.height = 3 * Math.random() + 1 + "px", n.style.left = 100 * Math.random() + "%", n.style.top = 100 * Math.random() + "%", n.style.animationDelay = 4 * Math.random() + "s", e.appendChild(n) } }
-createStars(), switchUIMode(), enableSlow3D(!1);
-for (let e = 0; e < 20; e++) { let e = document.createElement("div"); e.classList.add("bar"), visualizerDiv.appendChild(e) }
-visualizerBars = document.querySelectorAll(".bar"), refreshPlaylist(), updatePlaylistCount(), loadSettings(), "mediaSession" in navigator && (navigator.mediaSession.setActionHandler("play", () => { isPlaying || playPauseBtn.click() }), navigator.mediaSession.setActionHandler("pause", () => { isPlaying && playPauseBtn.click() }), navigator.mediaSession.setActionHandler("previoustrack", () => prevBtn.click()), navigator.mediaSession.setActionHandler("nexttrack", () => nextBtn.click()));
+document.getElementById("fullscreenFab").onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+};
+
+burgerMenuBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    burgerDropdown.classList.toggle("open");
+    burgerMenuBtn.classList.toggle("active");
+});
+document.addEventListener("click", e => {
+    if (!burgerDropdown.contains(e.target) && e.target !== burgerMenuBtn) {
+        burgerDropdown.classList.remove("open");
+        burgerMenuBtn.classList.remove("active");
+    }
+});
+burgerDropdown.querySelectorAll(".dropdown-item").forEach(item => {
+    item.addEventListener("click", () => {
+        let action = item.dataset.action;
+        burgerDropdown.classList.remove("open");
+        burgerMenuBtn.classList.remove("active");
+        if (action === "camera") cameraToggleChip.click();
+        else if (action === "palace") palaceToggleChip.click();
+        else if (action === "boost") boostChip.click();
+        else if (action === "powersave") powerSaveChip.click();
+        else if (action === "advanced") advancedToggleChip.click();
+        else if (action === "info") infoChip.click();
+        else if (action === "shortcuts") shortcutsFab.click();
+    });
+});
+
+document.getElementById("exportPlaylistBtn").addEventListener("click", exportPlaylist);
+document.getElementById("importPlaylistBtn").addEventListener("click", () => {
+    document.getElementById("importPlaylistInput").click();
+});
+document.getElementById("importPlaylistInput").addEventListener("change", e => {
+    if (e.target.files[0]) {
+        importPlaylist(e.target.files[0]);
+        e.target.value = "";
+    }
+});
+document.getElementById("clearPlaylistBtn").addEventListener("click", clearAllPlaylist);
+
+fileInput.addEventListener("change", e => {
+    addSongs(Array.from(e.target.files));
+    fileInput.value = "";
+});
+
+document.getElementById("imageInput").addEventListener("change", e => {
+    if (e.target.files[0]) {
+        let reader = new FileReader();
+        reader.onload = ev => {
+            albumImage.src = ev.target.result;
+            if (songs[currentIndex]) songs[currentIndex].cover = ev.target.result;
+            updateMediaSession();
+        };
+        reader.readAsDataURL(e.target.files[0]);
+    }
+});
+
+// تأثيرات القصر
+document.getElementById("applyPalaceEffect").addEventListener("click", () => {
+    let size = parseFloat(document.getElementById("palaceSize").value) / 100;
+    if (wetGain && dryGain) {
+        wetGain.gain.value = Math.min(1.3, reverbSliderValue + 0.9 * size);
+        dryGain.gain.value = Math.max(0.4, 0.8 - 0.25 * size);
+        document.getElementById("palaceStatus").innerHTML = "🏰 قصر نشط: صدى " + Math.round(100 * wetGain.gain.value) + "%";
+    }
+});
+document.getElementById("resetPalaceEffect").addEventListener("click", () => {
+    if (wetGain && dryGain) {
+        wetGain.gain.value = 1.2 * reverbSliderValue;
+        dryGain.gain.value = 0.8;
+        document.getElementById("palaceStatus").innerHTML = "تم إعادة التعيين";
+    }
+});
+document.getElementById("palaceSize").addEventListener("input", e => {
+    document.getElementById("palaceSizeValue").innerText = e.target.value + "%";
+});
+
+// المعادل EQ
+const eqContainer = document.getElementById("eqBands");
+const eqPresets = {
+    flat: Array(18).fill(0),
+    bass: [6, 5, 4, 3, 2, 1, 0, -1, -1, 0, 1, 1, 0, 0, 0, 0, 0, 0],
+    vocal: [-2, -1, 0, 1, 2, 3, 3, 2, 1, 0, 0, -1, -2, -2, -2, -1, -1, 0],
+    rock: [4, 4, 3, 2, 1, 0, 1, 2, 3, 3, 3, 2, 1, 0, 0, 0, 0, 0],
+    electronic: [5, 5, 3, 1, 0, -1, 0, 1, 2, 3, 3, 2, 1, 1, 0, 0, 0, 0]
+};
+
+function buildEQ() {
+    eqContainer.innerHTML = "";
+    let labels = ["80", "32", "50", "80", "125", "200", "315", "500", "800", "1.2k", "2k", "3.15k", "5k", "8k", "12.5k", "16k", "18k", "20k"];
+    labels.forEach((label, i) => {
+        let div = document.createElement("div");
+        div.style.textAlign = "center";
+        div.innerHTML = '<input type="range" class="eq-slider" min="-12" max="12" value="0" data-index="' + i + '">\n                         <div style="font-size:10px;">' + label + '</div><div style="font-size:10px;" id="eqVal' + i + '">0dB</div>';
+        eqContainer.appendChild(div);
+        let slider = div.querySelector("input");
+        slider.oninput = () => {
+            let val = parseFloat(slider.value);
+            document.getElementById("eqVal" + i).innerText = val + "dB";
+            if (filters[i]) filters[i].gain.value = val;
+            saveSettings();
+        };
+    });
+}
+buildEQ();
+
+document.querySelectorAll(".preset-btn").forEach(btn => {
+    btn.onclick = () => {
+        let preset = btn.dataset.preset;
+        if (eqPresets[preset]) {
+            eqPresets[preset].forEach((val, i) => {
+                let slider = document.querySelector('.eq-slider[data-index="' + i + '"]');
+                if (slider) {
+                    slider.value = val;
+                    slider.dispatchEvent(new Event("input"));
+                }
+            });
+            saveSettings();
+        }
+    };
+});
+
+document.getElementById("reverb").oninput = e => {
+    reverbSliderValue = parseFloat(e.target.value) / 100;
+    document.getElementById("reverbValue").innerText = e.target.value + "%";
+    if (wetGain) wetGain.gain.value = 1.2 * reverbSliderValue;
+    saveSettings();
+};
+
+document.getElementById("playbackSpeed").oninput = e => {
+    audio.playbackRate = e.target.value / 100;
+    document.getElementById("speedValue").innerText = e.target.value + "%";
+};
+
+document.getElementById("volumeEnhancementSlider").oninput = e => {
+    volumeEnhance = e.target.value / 100;
+    document.getElementById("volumeValue").innerText = e.target.value + "%";
+    applyBoostSettings();
+};
+
+document.getElementById("boostEnhancementSlider").oninput = e => {
+    boostLevel = 1 + 2 * (e.target.value / 100);
+    document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1);
+    applyBoostSettings();
+    boostActive = boostLevel > 1.1;
+    boostChip.classList.toggle("active-chip", boostActive);
+};
+
+document.getElementById("bassEnhancementSlider").oninput = e => {
+    bassLevelVal = 24 * (e.target.value / 100);
+    document.getElementById("bassValue").innerText = e.target.value + "%";
+    applyBoostSettings();
+};
+
+// اختصارات لوحة المفاتيح
+document.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT") return;
+    switch (e.key) {
+        case " ": e.preventDefault(); playPauseBtn.click(); break;
+        case "ArrowRight": nextBtn.click(); break;
+        case "ArrowLeft": prevBtn.click(); break;
+        case "ArrowUp": audio.volume = Math.min(1, audio.volume + 0.05); volumeProgress.style.width = (100 * audio.volume) + "%"; volumeEnhance = audio.volume; applyBoostSettings(); break;
+        case "ArrowDown": audio.volume = Math.max(0, audio.volume - 0.05); volumeProgress.style.width = (100 * audio.volume) + "%"; volumeEnhance = audio.volume; applyBoostSettings(); break;
+        case "r": repeatBtn.click(); break;
+        case "s": shuffleBtn.click(); break;
+        case "b": boostChip.click(); break;
+        case "c": cameraToggleChip.click(); break;
+        case "p": powerSaveChip.click(); break;
+        case "t": palaceToggleChip.click(); break;
+        case "h": advancedToggleChip.click(); break;
+    }
+});
+
+// حفظ واستعادة الإعدادات
+function saveSettings() {
+    let settings = {
+        volumeEnhance: volumeEnhance,
+        boostLevel: boostLevel,
+        bassLevelVal: bassLevelVal,
+        reverbSliderValue: reverbSliderValue,
+        eqValues: filters.map(f => f.gain.value),
+        volume: audio.volume
+    };
+    localStorage.setItem("silverPlayerSettings_v2", JSON.stringify(settings));
+}
+
+function loadSettings() {
+    let saved = localStorage.getItem("silverPlayerSettings_v2");
+    if (!saved) return;
+    try {
+        let s = JSON.parse(saved);
+        volumeEnhance = s.volumeEnhance || 0.7;
+        boostLevel = s.boostLevel || 1;
+        bassLevelVal = s.bassLevelVal || 0;
+        reverbSliderValue = s.reverbSliderValue || 0.3;
+        audio.volume = s.volume || 0.7;
+        volumeProgress.style.width = (100 * audio.volume) + "%";
+        document.getElementById("volumeEnhancementSlider").value = 100 * volumeEnhance;
+        document.getElementById("volumeValue").innerText = Math.round(100 * volumeEnhance) + "%";
+        document.getElementById("boostEnhancementSlider").value = 50 * (boostLevel - 1);
+        document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1);
+        document.getElementById("bassEnhancementSlider").value = bassLevelVal / 24 * 100;
+        document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
+        document.getElementById("reverb").value = 100 * reverbSliderValue;
+        document.getElementById("reverbValue").innerText = Math.round(100 * reverbSliderValue) + "%";
+        if (wetGain) wetGain.gain.value = 1.2 * reverbSliderValue;
+        if (s.eqValues && filters.length === s.eqValues.length) {
+            filters.forEach((f, i) => {
+                f.gain.value = s.eqValues[i];
+                let slider = document.querySelector('.eq-slider[data-index="' + i + '"]');
+                if (slider) {
+                    slider.value = s.eqValues[i];
+                    document.getElementById("eqVal" + i).innerText = s.eqValues[i] + "dB";
+                }
+            });
+        }
+        applyBoostSettings();
+    } catch (e) {
+        console.warn("إعدادات غير صالحة");
+    }
+}
+
+// ========== السحب والإفلات ==========
+function handleDragEnter(e) {
+    document.body.classList.add("drag-over");
+    dropOverlay.classList.add("show");
+}
+function handleDragLeave(e) {
+    if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) {
+        document.body.classList.remove("drag-over");
+        dropOverlay.classList.remove("show");
+    }
+}
+function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+}
+function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.body.classList.remove("drag-over");
+    dropOverlay.classList.remove("show");
+
+    let files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+
+    let audioFiles = [];
+    let lyricsFile = null;
+    const audioExts = ["mp3", "wav", "ogg", "aac", "flac", "m4a", "opus"];
+    const lyricsExts = ["srt", "lrc", "txt"];
+
+    for (let file of files) {
+        let ext = file.name.split(".").pop().toLowerCase();
+        if (audioExts.includes(ext)) {
+            audioFiles.push(file);
+        } else if (lyricsExts.includes(ext) && !lyricsFile) {
+            lyricsFile = file;
+        }
+    }
+
+    // معالجة الملفات الصوتية
+    if (audioFiles.length) {
+        addSongs(audioFiles);
+    }
+
+    // ✨ إصلاح: معالجة ملف الترجمة بشكل صحيح
+    if (lyricsFile) {
+        let reader = new FileReader();
+        reader.onload = function(ev) {
+            processLyricsFile(ev.target.result, lyricsFile.name);
+        };
+        reader.readAsText(lyricsFile, "UTF-8");
+    }
+}
+
+document.addEventListener("dragenter", handleDragEnter);
+document.addEventListener("dragleave", handleDragLeave);
+document.addEventListener("dragover", handleDragOver);
+document.addEventListener("drop", handleDrop);
+
+// ========== النجوم ==========
+function createStars() {
+    let container = document.getElementById("starsBackground");
+    for (let i = 0; i < 120; i++) {
+        let star = document.createElement("div");
+        star.classList.add("star");
+        star.style.width = star.style.height = (Math.random() * 3 + 1) + "px";
+        star.style.left = Math.random() * 100 + "%";
+        star.style.top = Math.random() * 100 + "%";
+        star.style.animationDelay = Math.random() * 4 + "s";
+        container.appendChild(star);
+    }
+}
+createStars();
+
+// ========== التهيئة النهائية ==========
+switchUIMode();
+enableSlow3D(false);
+
+// إنشاء أشرطة المرئي البصري
+for (let i = 0; i < 20; i++) {
+    let bar = document.createElement("div");
+    bar.classList.add("bar");
+    visualizerDiv.appendChild(bar);
+}
+visualizerBars = document.querySelectorAll(".bar");
+
+refreshPlaylist();
+updatePlaylistCount();
+loadSettings();
+
+if ("mediaSession" in navigator) {
+    navigator.mediaSession.setActionHandler("play", () => { if (!isPlaying) playPauseBtn.click(); });
+    navigator.mediaSession.setActionHandler("pause", () => { if (isPlaying) playPauseBtn.click(); });
+    navigator.mediaSession.setActionHandler("previoustrack", () => prevBtn.click());
+    navigator.mediaSession.setActionHandler("nexttrack", () => nextBtn.click());
+}
+
 })();
