@@ -179,16 +179,19 @@
                     <input type="range" id="bassEnhancementSlider" min="0" max="100" value="0">
                 </div>
                 <div class="eq-container">
-                    <h4>المعادل الاحترافي</h4>
-                    <div class="eq-bands-container" id="eqBands"></div>
-                    <div class="preset-buttons" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-                        <button class="preset-btn active" data-preset="flat">مسطح</button>
-                        <button class="preset-btn" data-preset="bass">جهير</button>
-                        <button class="preset-btn" data-preset="vocal">صوتي</button>
-                        <button class="preset-btn" data-preset="rock">روك</button>
-                        <button class="preset-btn" data-preset="electronic">إلكتروني</button>
-                    </div>
-                </div>
+    <h4>المعادل الاحترافي (رسومي)</h4>
+    <div class="graphic-eq-wrapper">
+        <canvas id="graphicEqCanvas" width="780" height="200"></canvas>
+        <div class="eq-labels" id="eqLabels"></div>
+    </div>
+    <div class="preset-buttons" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;">
+        <button class="preset-btn active" data-preset="flat">مسطح</button>
+        <button class="preset-btn" data-preset="bass">جهير</button>
+        <button class="preset-btn" data-preset="vocal">صوتي</button>
+        <button class="preset-btn" data-preset="rock">روك</button>
+        <button class="preset-btn" data-preset="electronic">إلكتروني</button>
+    </div>
+</div>
                 <div class="analysis-panel">
                     <h4 style="text-align:center;">📊 طيف فضّي</h4>
                     <div class="spectrum-display"><canvas id="spectrumCanvas"></canvas></div>
