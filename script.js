@@ -679,7 +679,7 @@ function loadLyricsForCurrentSong() {
     switchUIMode();
 }
 
-// ========== دوال قائمة التشغيل ==========
+// ========== دوال قائمة التشغيل (محسنة) ==========
 function getAudioDuration(file) {
     return new Promise(resolve => {
         let tempAudio = new Audio();
@@ -912,7 +912,6 @@ function importPlaylist(file) {
     reader.readAsText(file, "UTF-8");
 }
 
-// ⚡ دالة إضافة الملفات المحسنة
 async function addSongs(files) {
     if (!files || files.length === 0) return;
     showLoading();
@@ -1001,7 +1000,6 @@ function playNext() {
 function applyBoostSettings() {
     if (gainNode) {
         gainNode.gain.value = volumeEnhance * boostLevel;
-        // تطبيق جميع قيم المعادل بما فيها eqValues[0] (الجهير)
         if (filters.length === GRAPHIC_EQ_BANDS) {
             eqValues.forEach((val, i) => { if (filters[i]) filters[i].gain.value = val; });
         }
@@ -1301,7 +1299,6 @@ document.getElementById("importPlaylistInput").addEventListener("change", e => {
 });
 document.getElementById("clearPlaylistBtn").addEventListener("click", clearAllPlaylist);
 
-// ربط إضافة الملفات
 fileInput.addEventListener("change", e => {
     if (e.target.files && e.target.files.length > 0) {
         addSongs(Array.from(e.target.files));
@@ -1341,7 +1338,7 @@ document.getElementById("palaceSize").addEventListener("input", e => {
     document.getElementById("palaceSizeValue").innerText = e.target.value + "%";
 });
 
-// ========== Graphic EQ Functions (bass على اليمين) ==========
+// ========== Graphic EQ Functions (bass on right, integrated bass slider) ==========
 function initGraphicEQ() {
     eqCanvas = document.getElementById('graphicEqCanvas');
     eqCtx = eqCanvas.getContext('2d');
@@ -1380,8 +1377,6 @@ function initGraphicEQ() {
                 document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 saveSettings();
-                // تحديث slider الجهير بعد تطبيق preset
-                updateBassSliderFromEq();
             }
         });
     });
@@ -1391,23 +1386,10 @@ function initGraphicEQ() {
         document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
         document.querySelector('.preset-btn[data-preset="flat"]').classList.add('active');
         saveSettings();
-        updateBassSliderFromEq();
     });
 
     const labelsContainer = document.querySelector('.eq-grid-labels');
     labelsContainer.innerHTML = [...eqLabels].reverse().map(f => `<span>${f}</span>`).join('');
-}
-
-// تحديث شريط الجهير بناءً على قيمة eqValues[0]
-function updateBassSliderFromEq() {
-    let bassSlider = document.getElementById("bassEnhancementSlider");
-    let bassValueSpan = document.getElementById("bassValue");
-    if (bassSlider && bassValueSpan) {
-        // تحويل dB (0..24) إلى 0..100% (بافتراض أقصى 24 ديسيبل)
-        let bassPercent = Math.round((Math.max(0, eqValues[0]) / 24) * 100);
-        bassSlider.value = bassPercent;
-        bassValueSpan.innerText = bassPercent + "%";
-    }
 }
 
 function setEqValues(values) {
@@ -1415,6 +1397,14 @@ function setEqValues(values) {
     eqValues = [...values];
     if (filters && filters.length === GRAPHIC_EQ_BANDS) {
         filters.forEach((filter, i) => { filter.gain.value = eqValues[i]; });
+    }
+    // تحديث شريط الجهير ليعكس القيمة الجديدة
+    let bassSlider = document.getElementById("bassEnhancementSlider");
+    let bassValueSpan = document.getElementById("bassValue");
+    if (bassSlider && bassValueSpan) {
+        let bassPercent = Math.round((Math.max(0, eqValues[0]) / 24) * 100);
+        bassSlider.value = bassPercent;
+        bassValueSpan.innerText = bassPercent + "%";
     }
     updateEqPoints();
     drawEqCanvas();
@@ -1428,7 +1418,7 @@ function updateEqPoints() {
     const gW = w - padX * 2, gH = h - padY * 2;
 
     eqPoints = eqValues.map((db, i) => {
-        // عكس الإحداثي الأفقي: المؤشر 0 (bass) يظهر على اليمين
+        // عكس الاتجاه: bass على اليمين
         const x = padX + gW - (i / (GRAPHIC_EQ_BANDS - 1)) * gW;
         const norm = (db - EQ_MIN_DB) / (EQ_MAX_DB - EQ_MIN_DB);
         const y = padY + gH - norm * gH;
@@ -1525,8 +1515,16 @@ function updateSingleBand(index, db) {
     if (filters && filters[index]) filters[index].gain.value = db;
     updateEqPoints();
     drawEqCanvas();
-    // إذا تم تغيير الجهير (index 0) مباشرة من الرسم، حدث الشريط المنزلق
-    if (index === 0) updateBassSliderFromEq();
+    // إذا تغيرت النقطة الأولى (الجهير)، حدث شريط الجهير
+    if (index === 0) {
+        let bassSlider = document.getElementById("bassEnhancementSlider");
+        let bassValueSpan = document.getElementById("bassValue");
+        if (bassSlider && bassValueSpan) {
+            let bassPercent = Math.round((Math.max(0, db) / 24) * 100);
+            bassSlider.value = bassPercent;
+            bassValueSpan.innerText = bassPercent + "%";
+        }
+    }
 }
 
 function onEqMouseDown(e) {
@@ -1641,13 +1639,20 @@ function loadSettings() {
             }
             updateEqPoints();
             drawEqCanvas();
-            updateBassSliderFromEq();
+            // تحديث شريط الجهير من الإعدادات
+            let bassSlider = document.getElementById("bassEnhancementSlider");
+            let bassValueSpan = document.getElementById("bassValue");
+            if (bassSlider && bassValueSpan) {
+                let bassPercent = Math.round((Math.max(0, eqValues[0]) / 24) * 100);
+                bassSlider.value = bassPercent;
+                bassValueSpan.innerText = bassPercent + "%";
+            }
         }
         applyBoostSettings();
     } catch (e) { console.warn("إعدادات غير صالحة"); }
 }
 
-// باقي الإعدادات
+// ========== عناصر التحكم الأخرى ==========
 document.getElementById("reverb").oninput = e => {
     reverbSliderValue = parseFloat(e.target.value) / 100;
     document.getElementById("reverbValue").innerText = e.target.value + "%";
@@ -1670,10 +1675,10 @@ document.getElementById("boostEnhancementSlider").oninput = e => {
     boostActive = boostLevel > 1.1;
     boostChip.classList.toggle("active-chip", boostActive);
 };
-// شريط تعزيز الجهير: يعدل eqValues[0] مباشرة
+// شريط تعزيز الجهير المتكامل
 document.getElementById("bassEnhancementSlider").oninput = e => {
     let percent = parseInt(e.target.value);
-    let db = (percent / 100) * 24; // تحويل 0-100% إلى 0..24 dB
+    let db = (percent / 100) * 24; // 0-24 dB
     eqValues[0] = db;
     if (filters && filters[0]) filters[0].gain.value = db;
     document.getElementById("bassValue").innerText = percent + "%";
@@ -1682,7 +1687,7 @@ document.getElementById("bassEnhancementSlider").oninput = e => {
     saveSettings();
 };
 
-// اختصارات لوحة المفاتيح
+// ========== اختصارات لوحة المفاتيح ==========
 document.addEventListener("keydown", e => {
     if (e.target.tagName === "INPUT") return;
     switch (e.key) {
