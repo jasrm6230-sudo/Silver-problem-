@@ -920,7 +920,6 @@ async function addSongs(files) {
     let addedCount = 0;
     for (let file of files) {
         try {
-            // تحقق من أن الملف صالح وله حجم
             if (!file || file.size === 0) continue;
             let url = URL.createObjectURL(file);
             let duration = await getAudioDuration(file);
@@ -938,7 +937,6 @@ async function addSongs(files) {
         }
     }
     refreshPlaylist();
-    // إذا لم تكن هناك أغنية نشطة، شغل أول أغنية
     if (songs.length > 0 && !audio.src) {
         currentIndex = 0;
         loadSong(0);
@@ -1311,7 +1309,7 @@ document.getElementById("clearPlaylistBtn").addEventListener("click", clearAllPl
 fileInput.addEventListener("change", e => {
     if (e.target.files && e.target.files.length > 0) {
         addSongs(Array.from(e.target.files));
-        fileInput.value = ""; // تفريغ المدخل ليسمح بإعادة اختيار نفس الملفات
+        fileInput.value = "";
     }
 });
 
@@ -1347,7 +1345,7 @@ document.getElementById("palaceSize").addEventListener("input", e => {
     document.getElementById("palaceSizeValue").innerText = e.target.value + "%";
 });
 
-// ========== Graphic EQ Functions ==========
+// ========== Graphic EQ Functions (الإصلاح: bass على اليمين) ==========
 function initGraphicEQ() {
     eqCanvas = document.getElementById('graphicEqCanvas');
     eqCtx = eqCanvas.getContext('2d');
@@ -1398,7 +1396,8 @@ function initGraphicEQ() {
     });
 
     const labelsContainer = document.querySelector('.eq-grid-labels');
-    labelsContainer.innerHTML = eqLabels.map(f => `<span>${f}</span>`).join('');
+    // عكس التسميات لتبدأ من اليمين (bass)
+    labelsContainer.innerHTML = [...eqLabels].reverse().map(f => `<span>${f}</span>`).join('');
 }
 
 function setEqValues(values) {
@@ -1419,7 +1418,8 @@ function updateEqPoints() {
     const gW = w - padX * 2, gH = h - padY * 2;
 
     eqPoints = eqValues.map((db, i) => {
-        const x = padX + (i / (GRAPHIC_EQ_BANDS - 1)) * gW;
+        // عكس الإحداثي الأفقي: المؤشر 0 (bass) يظهر على اليمين
+        const x = padX + gW - (i / (GRAPHIC_EQ_BANDS - 1)) * gW;
         const norm = (db - EQ_MIN_DB) / (EQ_MAX_DB - EQ_MIN_DB);
         const y = padY + gH - norm * gH;
         return { x, y, db };
@@ -1745,7 +1745,7 @@ visualizerBars = document.querySelectorAll(".bar");
 refreshPlaylist();
 updatePlaylistCount();
 loadSettings();
-initGraphicEQ(); // استدعاء المعادل الجديد
+initGraphicEQ(); // استدعاء المعادل الجديد مع الاتجاه الصحيح
 
 if ("mediaSession" in navigator) {
     navigator.mediaSession.setActionHandler("play", () => { if (!isPlaying) playPauseBtn.click(); });
