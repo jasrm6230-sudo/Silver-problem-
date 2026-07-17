@@ -729,7 +729,6 @@ function renderPlaylistItem(index) {
         deleteSong(index);
     });
 
-    // السحب والإفلات
     div.addEventListener("dragstart", e => {
         e.dataTransfer.setData("text/plain", index.toString());
         div.classList.add("dragging");
@@ -748,7 +747,6 @@ function renderPlaylistItem(index) {
         if (from !== to && !isNaN(from) && !isNaN(to)) moveSong(from, to);
     });
 
-    // السحب للمس
     let touchStartY = 0;
     div.querySelector(".drag-handle").addEventListener("touchstart", e => {
         touchStartY = e.touches[0].clientY;
@@ -1002,10 +1000,12 @@ function playNext() {
 function applyBoostSettings() {
     if (gainNode) {
         gainNode.gain.value = volumeEnhance * boostLevel;
+        // تطبيق الجهير: الفلتر الأول (lowshelf) عند 80Hz
         if (filters.length > 0 && filters[0].type === "lowshelf") {
             filters[0].gain.value = bassLevelVal;
-            document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
+            // لا نقوم بتحديث bassValue هنا، لأن الـ slider يقوم بذلك
         }
+        // تطبيق قيم المعادل الرسومي على الفلاتر من 0 إلى 17
         if (filters.length === GRAPHIC_EQ_BANDS) {
             eqValues.forEach((val, i) => { if (filters[i]) filters[i].gain.value = val; });
         }
@@ -1620,6 +1620,7 @@ function loadSettings() {
         document.getElementById("volumeValue").innerText = Math.round(100 * volumeEnhance) + "%";
         document.getElementById("boostEnhancementSlider").value = 50 * (boostLevel - 1);
         document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1);
+        // ضبط شريط الجهير من القيمة المحفوظة
         document.getElementById("bassEnhancementSlider").value = bassLevelVal / 24 * 100;
         document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
         document.getElementById("reverb").value = 100 * reverbSliderValue;
@@ -1661,6 +1662,8 @@ document.getElementById("boostEnhancementSlider").oninput = e => {
     boostActive = boostLevel > 1.1;
     boostChip.classList.toggle("active-chip", boostActive);
 };
+
+// 🔥 شريط تعزيز الجهير (يعمل الآن بشكل منفصل ونظيف)
 document.getElementById("bassEnhancementSlider").oninput = e => {
     bassLevelVal = 24 * (e.target.value / 100);
     document.getElementById("bassValue").innerText = e.target.value + "%";
