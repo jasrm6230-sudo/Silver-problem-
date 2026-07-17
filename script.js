@@ -10,43 +10,31 @@ function parseTime(e) {
 /**
  * تحليل ملف LRC مع دعم تنسيقات متعددة:
  * [mm:ss.xx] أو [mm:ss:xx] أو [mm:ss.xxx]
- * مع إعادة تعيين lastIndex لكل سطر (الإصلاح الأساسي)
  */
 function parseLRC(e) {
     let lines = e.split(/\r?\n/);
     let entries = [];
-    // تعريف regex مع علم g ولكن سيتم إعادة تعيين lastIndex يدوياً
     let regex = /\[(\d{2}):(\d{2})(?:[\.:](\d{1,3}))?\]/g;
 
     for (let line of lines) {
-        // ✨ الإصلاح الأساسي: إعادة تعيين lastIndex قبل كل سطر
         regex.lastIndex = 0;
-
         let match;
         let times = [];
-
-        // استخراج جميع الطوابع الزمنية في السطر الواحد
         while (null !== (match = regex.exec(line))) {
             let minutes = parseInt(match[1], 10);
             let seconds = parseInt(match[2], 10);
             let fraction = match[3] ? parseInt(match[3], 10) : 0;
-            // إذا كان الكسر مكوناً من 3 أرقام نعتبره أجزاء من الألف (milliseconds)
-            // وإلا نعتبره أجزاء من المئة (centiseconds)
             let fractionDivisor = match[3] && match[3].length === 3 ? 1000 : 100;
             let timeInSeconds = 60 * minutes + seconds + fraction / fractionDivisor;
             times.push(timeInSeconds);
         }
-
-        // إزالة الطوابع الزمنية للحصول على النص
         let text = line.replace(/\[(\d{2}):(\d{2})(?:[\.:](\d{1,3}))?\]/g, "").trim();
-
         if (times.length > 0 && text !== "") {
             for (let t of times) {
                 entries.push({ time: t, text: text });
             }
         }
     }
-
     return entries.sort((a, b) => a.time - b.time);
 }
 
@@ -54,10 +42,8 @@ function convertLRCtoSRTlike(lrcEntries, fallbackDuration = 300) {
     let cues = [];
     for (let i = 0; i < lrcEntries.length; i++) {
         let start = lrcEntries[i].time;
-        // المدة حتى التلميح التالي، أو مدة افتراضية
         let end = (i + 1 < lrcEntries.length) ? lrcEntries[i + 1].time : start + fallbackDuration;
-        // ضمان عدم تجاوز النهاية للنطاق المعقول
-        if (end - start > 15) end = start + 5; // إذا كانت المدة طويلة جداً، نقتصر على 5 ثوانٍ
+        if (end - start > 15) end = start + 5;
         cues.push({ start: start, end: end, text: lrcEntries[i].text });
     }
     return cues;
@@ -189,6 +175,28 @@ let allObjectURLs = [],
     currentMode = "word",
     lastStageIndex = -1,
     stageTransitionTimeout = null;
+
+// ========== Graphic EQ System (جديد) ==========
+const GRAPHIC_EQ_BANDS = 18;
+const EQ_MIN_DB = -12;
+const EQ_MAX_DB = 12;
+const eqFreqs = [80, 32, 50, 80, 125, 200, 315, 500, 800, 1200, 2000, 3150, 5000, 8000, 12500, 16000, 18000, 20000];
+const eqLabels = ['80','32','50','80','125','200','315','500','800','1.2k','2k','3.15k','5k','8k','12.5k','16k','18k','20k'];
+
+let eqValues = new Array(GRAPHIC_EQ_BANDS).fill(0);
+let eqCanvas, eqCtx;
+let eqPoints = [];
+let activeEqIndex = -1;
+let eqTooltip = document.getElementById('eqTooltip');
+let resetEqBtn = document.getElementById('resetEqBtn');
+
+const eqPresets = {
+    flat:    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    bass:    [6,5,4,3,2,1,0,-1,-1,0,1,1,0,0,0,0,0,0],
+    vocal:   [-2,-1,0,1,2,3,3,2,1,0,0,-1,-2,-2,-2,-1,-1,0],
+    rock:    [4,4,3,2,1,0,1,2,3,3,3,2,1,0,0,0,0,0],
+    electronic: [5,5,3,1,0,-1,0,1,2,3,3,2,1,1,0,0,0,0]
+};
 
 // ========== Media Session ==========
 function updateMediaSession() {
@@ -532,7 +540,6 @@ function updateStageWords(index) {
     prevWordDiv.classList.remove("prev-exit");
     currentWordDiv.classList.remove("current-enter");
     nextWordDiv.classList.remove("next-enter");
-    // force reflow
     void prevWordDiv.offsetWidth;
 
     let prev = index > 0 ? wordTimeline[index - 1].word : "";
@@ -646,12 +653,8 @@ function clearSRT() {
     lastStageIndex = -1;
 }
 
-/**
- * معالجة ملف الترجمة المُرفع
- */
 function processLyricsFile(content, fileName) {
     let songId = getCurrentSongId();
-    // استخدام مدة صوتية صالحة كقيمة افتراضية
     let duration = (audio.duration && isFinite(audio.duration) && audio.duration > 0) ? audio.duration : 300;
     let result = loadLyricsData(content, fileName, duration);
 
@@ -677,7 +680,6 @@ function processLyricsFile(content, fileName) {
     }
 }
 
-// رفع ملف SRT/LRC عبر الزر
 srtInput.addEventListener("change", e => {
     let file = e.target.files[0];
     if (file) {
@@ -1047,12 +1049,19 @@ function playNext() {
     updatePlaylistActive();
 }
 
+// ========== دمج المعادل الرسومي مع دوال الصوت ==========
 function applyBoostSettings() {
     if (gainNode) {
         gainNode.gain.value = volumeEnhance * boostLevel;
         if (filters.length > 0 && filters[0].type === "lowshelf") {
             filters[0].gain.value = bassLevelVal;
             document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
+        }
+        // تطبيق قيم المعادل على الفلاتر (إذا كانت موجودة)
+        if (filters.length === GRAPHIC_EQ_BANDS) {
+            eqValues.forEach((val, i) => {
+                if (filters[i]) filters[i].gain.value = val;
+            });
         }
         saveSettings();
     }
@@ -1089,6 +1098,7 @@ async function initAudioContext() {
         analyser.fftSize = 2048;
         analyser.smoothingTimeConstant = 0.7;
 
+        // إنشاء الفلاتر (18 نطاق)
         let freqs = [80, 32, 50, 80, 125, 200, 315, 500, 800, 1200, 2000, 3150, 5000, 8000, 12500, 16000, 18000, 20000];
         filters = freqs.map((freq, i) => {
             let filter = audioContext.createBiquadFilter();
@@ -1453,51 +1463,309 @@ document.getElementById("palaceSize").addEventListener("input", e => {
     document.getElementById("palaceSizeValue").innerText = e.target.value + "%";
 });
 
-// المعادل EQ
-const eqContainer = document.getElementById("eqBands");
-const eqPresets = {
-    flat: Array(18).fill(0),
-    bass: [6, 5, 4, 3, 2, 1, 0, -1, -1, 0, 1, 1, 0, 0, 0, 0, 0, 0],
-    vocal: [-2, -1, 0, 1, 2, 3, 3, 2, 1, 0, 0, -1, -2, -2, -2, -1, -1, 0],
-    rock: [4, 4, 3, 2, 1, 0, 1, 2, 3, 3, 3, 2, 1, 0, 0, 0, 0, 0],
-    electronic: [5, 5, 3, 1, 0, -1, 0, 1, 2, 3, 3, 2, 1, 1, 0, 0, 0, 0]
-};
+// ========== Graphic EQ Functions (جديد) ==========
+function initGraphicEQ() {
+    eqCanvas = document.getElementById('graphicEqCanvas');
+    eqCtx = eqCanvas.getContext('2d');
 
-function buildEQ() {
-    eqContainer.innerHTML = "";
-    let labels = ["80", "32", "50", "80", "125", "200", "315", "500", "800", "1.2k", "2k", "3.15k", "5k", "8k", "12.5k", "16k", "18k", "20k"];
-    labels.forEach((label, i) => {
-        let div = document.createElement("div");
-        div.style.textAlign = "center";
-        div.innerHTML = '<input type="range" class="eq-slider" min="-12" max="12" value="0" data-index="' + i + '">\n                         <div style="font-size:10px;">' + label + '</div><div style="font-size:10px;" id="eqVal' + i + '">0dB</div>';
-        eqContainer.appendChild(div);
-        let slider = div.querySelector("input");
-        slider.oninput = () => {
-            let val = parseFloat(slider.value);
-            document.getElementById("eqVal" + i).innerText = val + "dB";
-            if (filters[i]) filters[i].gain.value = val;
-            saveSettings();
-        };
+    function resizeCanvas() {
+        const wrapper = eqCanvas.parentElement;
+        const rect = wrapper.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        eqCanvas.width = rect.width * dpr;
+        eqCanvas.height = 200 * dpr;
+        eqCanvas.style.width = rect.width + 'px';
+        eqCanvas.style.height = '200px';
+        eqCtx.setTransform(1, 0, 0, 1, 0, 0);
+        eqCtx.scale(dpr, dpr);
+        updateEqPoints();
+        drawEqCanvas();
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    eqCanvas.addEventListener('mousedown', onEqMouseDown);
+    window.addEventListener('mousemove', onEqMouseMove);
+    window.addEventListener('mouseup', onEqMouseUp);
+
+    eqCanvas.addEventListener('touchstart', onEqTouchStart, { passive: false });
+    eqCanvas.addEventListener('touchmove', onEqTouchMove, { passive: false });
+    eqCanvas.addEventListener('touchend', onEqTouchEnd);
+    eqCanvas.addEventListener('touchcancel', onEqTouchEnd);
+
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const preset = btn.dataset.preset;
+            if (eqPresets[preset]) {
+                setEqValues(eqPresets[preset]);
+                document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                saveSettings();
+            }
+        });
+    });
+
+    resetEqBtn.addEventListener('click', () => {
+        setEqValues(eqPresets.flat);
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.preset-btn[data-preset="flat"]').classList.add('active');
+        saveSettings();
+    });
+
+    const labelsContainer = document.querySelector('.eq-grid-labels');
+    labelsContainer.innerHTML = eqLabels.map(f => `<span>${f}</span>`).join('');
+}
+
+function setEqValues(values) {
+    if (!values || values.length !== GRAPHIC_EQ_BANDS) return;
+    eqValues = [...values];
+    if (filters && filters.length === GRAPHIC_EQ_BANDS) {
+        filters.forEach((filter, i) => {
+            filter.gain.value = eqValues[i];
+        });
+    }
+    updateEqPoints();
+    drawEqCanvas();
+}
+
+function updateEqPoints() {
+    if (!eqCanvas) return;
+    const w = eqCanvas.width / (window.devicePixelRatio || 1);
+    const h = 200;
+    const padX = 30, padY = 25;
+    const gW = w - padX * 2, gH = h - padY * 2;
+
+    eqPoints = eqValues.map((db, i) => {
+        const x = padX + (i / (GRAPHIC_EQ_BANDS - 1)) * gW;
+        const norm = (db - EQ_MIN_DB) / (EQ_MAX_DB - EQ_MIN_DB);
+        const y = padY + gH - norm * gH;
+        return { x, y, db };
     });
 }
-buildEQ();
 
-document.querySelectorAll(".preset-btn").forEach(btn => {
-    btn.onclick = () => {
-        let preset = btn.dataset.preset;
-        if (eqPresets[preset]) {
-            eqPresets[preset].forEach((val, i) => {
-                let slider = document.querySelector('.eq-slider[data-index="' + i + '"]');
-                if (slider) {
-                    slider.value = val;
-                    slider.dispatchEvent(new Event("input"));
-                }
-            });
-            saveSettings();
+function drawEqCanvas() {
+    if (!eqCtx) return;
+    const w = eqCanvas.width / (window.devicePixelRatio || 1);
+    const h = 200;
+    const padX = 30, padY = 25;
+    const gW = w - padX * 2, gH = h - padY * 2;
+
+    eqCtx.clearRect(0, 0, w, h);
+    eqCtx.fillStyle = '#09090D';
+    eqCtx.fillRect(padX, padY, gW, gH);
+
+    eqCtx.strokeStyle = 'rgba(200,200,220,0.08)';
+    eqCtx.lineWidth = 1;
+    eqCtx.font = '9px "Segoe UI"';
+    eqCtx.fillStyle = '#888';
+    for (let db = EQ_MIN_DB; db <= EQ_MAX_DB; db += 3) {
+        const y = padY + gH - ((db - EQ_MIN_DB) / (EQ_MAX_DB - EQ_MIN_DB)) * gH;
+        eqCtx.beginPath();
+        eqCtx.moveTo(padX, y);
+        eqCtx.lineTo(w - padX, y);
+        eqCtx.stroke();
+        eqCtx.textAlign = 'left';
+        eqCtx.fillText(db + 'dB', 4, y + 3);
+    }
+
+    if (eqPoints.length < 2) return;
+
+    eqCtx.beginPath();
+    eqCtx.strokeStyle = '#E8E8F2';
+    eqCtx.lineWidth = 2.8;
+    eqCtx.shadowColor = 'rgba(232,232,242,0.7)';
+    eqCtx.shadowBlur = 12;
+    eqCtx.moveTo(eqPoints[0].x, eqPoints[0].y);
+
+    for (let i = 0; i < eqPoints.length - 1; i++) {
+        const p0 = eqPoints[i === 0 ? 0 : i - 1];
+        const p1 = eqPoints[i];
+        const p2 = eqPoints[i + 1];
+        const p3 = eqPoints[i + 2 < eqPoints.length ? i + 2 : i + 1];
+
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+        eqCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+    eqCtx.stroke();
+    eqCtx.shadowBlur = 0;
+
+    eqPoints.forEach((pt, i) => {
+        const r = (i === activeEqIndex) ? 9 : 7;
+        eqCtx.beginPath();
+        eqCtx.arc(pt.x, pt.y, r, 0, 2 * Math.PI);
+        eqCtx.fillStyle = (i === activeEqIndex) ? '#FFFFFF' : '#D0D0F0';
+        eqCtx.fill();
+        eqCtx.strokeStyle = '#1A1A28';
+        eqCtx.lineWidth = 2;
+        eqCtx.stroke();
+    });
+}
+
+function yToDb(canvasY) {
+    const h = 200, padY = 25, gH = h - padY * 2;
+    let norm = 1 - (canvasY - padY) / gH;
+    norm = Math.min(1, Math.max(0, norm));
+    const db = EQ_MIN_DB + norm * (EQ_MAX_DB - EQ_MIN_DB);
+    return Math.round(db * 2) / 2;
+}
+
+function findClosestPoint(clientX, clientY) {
+    const rect = eqCanvas.getBoundingClientRect();
+    const scaleX = (eqCanvas.width / (window.devicePixelRatio || 1)) / rect.width;
+    const scaleY = (eqCanvas.height / (window.devicePixelRatio || 1)) / rect.height;
+    const mx = (clientX - rect.left) * scaleX;
+    const my = (clientY - rect.top) * scaleY;
+
+    let minDist = Infinity, idx = -1;
+    eqPoints.forEach((p, i) => {
+        const dx = p.x - mx, dy = p.y - my;
+        const dist = dx*dx + dy*dy;
+        if (dist < minDist && dist < 400) {
+            minDist = dist;
+            idx = i;
         }
-    };
-});
+    });
+    return idx;
+}
 
+function updateSingleBand(index, db) {
+    db = Math.min(EQ_MAX_DB, Math.max(EQ_MIN_DB, db));
+    eqValues[index] = db;
+    if (filters && filters[index]) filters[index].gain.value = db;
+    updateEqPoints();
+    drawEqCanvas();
+}
+
+function onEqMouseDown(e) {
+    const idx = findClosestPoint(e.clientX, e.clientY);
+    if (idx !== -1) {
+        activeEqIndex = idx;
+        showEqTooltip(e.clientX, e.clientY, eqValues[idx]);
+        drawEqCanvas();
+        e.preventDefault();
+    }
+}
+
+function onEqMouseMove(e) {
+    if (activeEqIndex === -1) return;
+    const rect = eqCanvas.getBoundingClientRect();
+    const scaleY = (eqCanvas.height / (window.devicePixelRatio || 1)) / rect.height;
+    const canvasY = (e.clientY - rect.top) * scaleY;
+    const newDb = yToDb(canvasY);
+    updateSingleBand(activeEqIndex, newDb);
+    showEqTooltip(e.clientX, e.clientY, newDb);
+}
+
+function onEqMouseUp() {
+    if (activeEqIndex !== -1) {
+        hideEqTooltip();
+        activeEqIndex = -1;
+        drawEqCanvas();
+        saveSettings();
+    }
+}
+
+function onEqTouchStart(e) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const idx = findClosestPoint(touch.clientX, touch.clientY);
+    if (idx !== -1) {
+        activeEqIndex = idx;
+        showEqTooltip(touch.clientX, touch.clientY, eqValues[idx]);
+        drawEqCanvas();
+    }
+}
+
+function onEqTouchMove(e) {
+    e.preventDefault();
+    if (activeEqIndex === -1) return;
+    const touch = e.touches[0];
+    const rect = eqCanvas.getBoundingClientRect();
+    const scaleY = (eqCanvas.height / (window.devicePixelRatio || 1)) / rect.height;
+    const canvasY = (touch.clientY - rect.top) * scaleY;
+    const newDb = yToDb(canvasY);
+    updateSingleBand(activeEqIndex, newDb);
+    showEqTooltip(touch.clientX, touch.clientY, newDb);
+}
+
+function onEqTouchEnd() {
+    if (activeEqIndex !== -1) {
+        hideEqTooltip();
+        activeEqIndex = -1;
+        drawEqCanvas();
+        saveSettings();
+    }
+}
+
+function showEqTooltip(clientX, clientY, db) {
+    if (!eqTooltip) return;
+    const rect = eqCanvas.getBoundingClientRect();
+    eqTooltip.textContent = (db > 0 ? '+' : '') + db.toFixed(1) + ' dB';
+    eqTooltip.style.left = (clientX - rect.left) + 'px';
+    eqTooltip.style.top = (clientY - rect.top - 35) + 'px';
+    eqTooltip.style.display = 'block';
+}
+
+function hideEqTooltip() {
+    if (eqTooltip) eqTooltip.style.display = 'none';
+}
+
+// ========== الإعدادات والحفظ ==========
+function saveSettings() {
+    let settings = {
+        volumeEnhance: volumeEnhance,
+        boostLevel: boostLevel,
+        bassLevelVal: bassLevelVal,
+        reverbSliderValue: reverbSliderValue,
+        eqValues: eqValues,  // تم تضمين قيم المعادل
+        volume: audio.volume
+    };
+    localStorage.setItem("silverPlayerSettings_v2", JSON.stringify(settings));
+}
+
+function loadSettings() {
+    let saved = localStorage.getItem("silverPlayerSettings_v2");
+    if (!saved) return;
+    try {
+        let s = JSON.parse(saved);
+        volumeEnhance = s.volumeEnhance || 0.7;
+        boostLevel = s.boostLevel || 1;
+        bassLevelVal = s.bassLevelVal || 0;
+        reverbSliderValue = s.reverbSliderValue || 0.3;
+        audio.volume = s.volume || 0.7;
+        volumeProgress.style.width = (100 * audio.volume) + "%";
+
+        document.getElementById("volumeEnhancementSlider").value = 100 * volumeEnhance;
+        document.getElementById("volumeValue").innerText = Math.round(100 * volumeEnhance) + "%";
+        document.getElementById("boostEnhancementSlider").value = 50 * (boostLevel - 1);
+        document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1);
+        document.getElementById("bassEnhancementSlider").value = bassLevelVal / 24 * 100;
+        document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
+        document.getElementById("reverb").value = 100 * reverbSliderValue;
+        document.getElementById("reverbValue").innerText = Math.round(100 * reverbSliderValue) + "%";
+        if (wetGain) wetGain.gain.value = 1.2 * reverbSliderValue;
+
+        // استعادة قيم المعادل
+        if (s.eqValues && Array.isArray(s.eqValues) && s.eqValues.length === GRAPHIC_EQ_BANDS) {
+            eqValues = s.eqValues;
+            if (filters && filters.length === GRAPHIC_EQ_BANDS) {
+                filters.forEach((f, i) => { f.gain.value = eqValues[i]; });
+            }
+            updateEqPoints();
+            drawEqCanvas();
+        }
+
+        applyBoostSettings();
+    } catch (e) {
+        console.warn("إعدادات غير صالحة");
+    }
+}
+
+// إعدادات أخرى (التضخيم، البيس، الـ reverb إلخ)
 document.getElementById("reverb").oninput = e => {
     reverbSliderValue = parseFloat(e.target.value) / 100;
     document.getElementById("reverbValue").innerText = e.target.value + "%";
@@ -1549,55 +1817,6 @@ document.addEventListener("keydown", e => {
     }
 });
 
-// حفظ واستعادة الإعدادات
-function saveSettings() {
-    let settings = {
-        volumeEnhance: volumeEnhance,
-        boostLevel: boostLevel,
-        bassLevelVal: bassLevelVal,
-        reverbSliderValue: reverbSliderValue,
-        eqValues: filters.map(f => f.gain.value),
-        volume: audio.volume
-    };
-    localStorage.setItem("silverPlayerSettings_v2", JSON.stringify(settings));
-}
-
-function loadSettings() {
-    let saved = localStorage.getItem("silverPlayerSettings_v2");
-    if (!saved) return;
-    try {
-        let s = JSON.parse(saved);
-        volumeEnhance = s.volumeEnhance || 0.7;
-        boostLevel = s.boostLevel || 1;
-        bassLevelVal = s.bassLevelVal || 0;
-        reverbSliderValue = s.reverbSliderValue || 0.3;
-        audio.volume = s.volume || 0.7;
-        volumeProgress.style.width = (100 * audio.volume) + "%";
-        document.getElementById("volumeEnhancementSlider").value = 100 * volumeEnhance;
-        document.getElementById("volumeValue").innerText = Math.round(100 * volumeEnhance) + "%";
-        document.getElementById("boostEnhancementSlider").value = 50 * (boostLevel - 1);
-        document.getElementById("boostIndicator").innerText = "x" + boostLevel.toFixed(1);
-        document.getElementById("bassEnhancementSlider").value = bassLevelVal / 24 * 100;
-        document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
-        document.getElementById("reverb").value = 100 * reverbSliderValue;
-        document.getElementById("reverbValue").innerText = Math.round(100 * reverbSliderValue) + "%";
-        if (wetGain) wetGain.gain.value = 1.2 * reverbSliderValue;
-        if (s.eqValues && filters.length === s.eqValues.length) {
-            filters.forEach((f, i) => {
-                f.gain.value = s.eqValues[i];
-                let slider = document.querySelector('.eq-slider[data-index="' + i + '"]');
-                if (slider) {
-                    slider.value = s.eqValues[i];
-                    document.getElementById("eqVal" + i).innerText = s.eqValues[i] + "dB";
-                }
-            });
-        }
-        applyBoostSettings();
-    } catch (e) {
-        console.warn("إعدادات غير صالحة");
-    }
-}
-
 // ========== السحب والإفلات ==========
 function handleDragEnter(e) {
     document.body.classList.add("drag-over");
@@ -1636,12 +1855,10 @@ function handleDrop(e) {
         }
     }
 
-    // معالجة الملفات الصوتية
     if (audioFiles.length) {
         addSongs(audioFiles);
     }
 
-    // ✨ إصلاح: معالجة ملف الترجمة بشكل صحيح
     if (lyricsFile) {
         let reader = new FileReader();
         reader.onload = function(ev) {
@@ -1686,6 +1903,7 @@ visualizerBars = document.querySelectorAll(".bar");
 refreshPlaylist();
 updatePlaylistCount();
 loadSettings();
+initGraphicEQ(); // استدعاء المعادل الجديد بدلاً من buildEQ()
 
 if ("mediaSession" in navigator) {
     navigator.mediaSession.setActionHandler("play", () => { if (!isPlaying) playPauseBtn.click(); });
