@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>المشغل الفضي الفاخر - Media Session + إيماءات + قائمة متكاملة</title>
+    <title>المشغل الفضي الفاخر - Media Session + إيماءات + معادل رسومي</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -81,6 +81,8 @@
             <div class="info-item"><span>يمكنك حذف أغنية منفردة (×)، إعادة ترتيبها بالسحب، مسح الكل، تصدير/استيراد القائمة.</span><span class="info-badge">محسّنة</span></div>
             <div class="info-section-title">📱 Media Session</div>
             <div class="info-item"><span>يظهر عنوان الأغنية والفنان والغلاف وأزرار التحكم في شاشة القفل والإشعارات.</span><span class="info-badge">حديث</span></div>
+            <div class="info-section-title">🎛️ المعادل الرسومي</div>
+            <div class="info-item"><span>معادل 18 نطاق برسم منحنى تفاعلي مع سحب النقاط ومسبقات جاهزة.</span><span class="info-badge">جديد</span></div>
             <button id="closeInfoModal" style="margin-top:20px;background:#2A2A38;border:none;padding:10px 20px;border-radius:40px;color:white;cursor:pointer;width:100%;">إغلاق</button>
         </div>
     </div>
@@ -88,7 +90,7 @@
     <div class="main-container">
         <div class="player-section" id="playerSection">
             <div class="music-player" id="musicPlayerContainer">
-                <div class="player-header"><h1>المشغل الفضي الفاخر</h1><p>Media Session | إيماءات | قائمة متكاملة</p></div>
+                <div class="player-header"><h1>المشغل الفضي الفاخر</h1><p>Media Session | إيماءات | معادل رسومي</p></div>
                 <div class="album-art-container" id="albumArtContainer"><img id="albumImage" class="album-art" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E"></div>
                 <label for="imageInput" class="image-label">🖼️ اختر صورة غلاف</label>
                 <input type="file" id="imageInput" class="image-input" accept="image/*">
@@ -178,26 +180,25 @@
                     <div>تعزيز الجهير <span id="bassValue">0%</span></div>
                     <input type="range" id="bassEnhancementSlider" min="0" max="100" value="0">
                 </div>
+                <!-- المعادل الرسومي الجديد -->
                 <div class="eq-container graphic-eq">
-    <div class="eq-header">
-        <h4>🎛️ المعادل الرسومي الفضي</h4>
-        <span class="eq-reset-btn" id="resetEqBtn" title="إعادة تعيين">↺</span>
-    </div>
-    <div class="graphic-eq-wrapper">
-        <canvas id="graphicEqCanvas"></canvas>
-        <div class="eq-value-tooltip" id="eqTooltip" style="display:none;">0 dB</div>
-        <div class="eq-grid-labels">
-            <!-- ستُملأ بال JavaScript -->
-        </div>
-    </div>
-    <div class="preset-buttons">
-        <button class="preset-btn active" data-preset="flat">مسطح</button>
-        <button class="preset-btn" data-preset="bass">جهير</button>
-        <button class="preset-btn" data-preset="vocal">صوتي</button>
-        <button class="preset-btn" data-preset="rock">روك</button>
-        <button class="preset-btn" data-preset="electronic">إلكتروني</button>
-    </div>
-</div>
+                    <div class="eq-header">
+                        <h4>🎛️ المعادل الرسومي الفضي</h4>
+                        <button class="eq-reset-btn" id="resetEqBtn" title="إعادة التعيين">↺</button>
+                    </div>
+                    <div class="graphic-eq-wrapper">
+                        <canvas id="graphicEqCanvas"></canvas>
+                        <div class="eq-value-tooltip" id="eqTooltip" style="display:none;">0 dB</div>
+                        <div class="eq-grid-labels" id="eqGridLabels"></div>
+                    </div>
+                    <div class="preset-buttons">
+                        <button class="preset-btn active" data-preset="flat">مسطح</button>
+                        <button class="preset-btn" data-preset="bass">جهير</button>
+                        <button class="preset-btn" data-preset="vocal">صوتي</button>
+                        <button class="preset-btn" data-preset="rock">روك</button>
+                        <button class="preset-btn" data-preset="electronic">إلكتروني</button>
+                    </div>
+                </div>
                 <div class="analysis-panel">
                     <h4 style="text-align:center;">📊 طيف فضّي</h4>
                     <div class="spectrum-display"><canvas id="spectrumCanvas"></canvas></div>
