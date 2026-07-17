@@ -178,13 +178,19 @@
                     <div>تعزيز الجهير <span id="bassValue">0%</span></div>
                     <input type="range" id="bassEnhancementSlider" min="0" max="100" value="0">
                 </div>
-                <div class="eq-container">
-    <h4>المعادل الاحترافي (رسومي)</h4>
-    <div class="graphic-eq-wrapper">
-        <canvas id="graphicEqCanvas" width="780" height="200"></canvas>
-        <div class="eq-labels" id="eqLabels"></div>
+                <div class="eq-container graphic-eq">
+    <div class="eq-header">
+        <h4>🎛️ المعادل الرسومي الفضي</h4>
+        <span class="eq-reset-btn" id="resetEqBtn" title="إعادة تعيين">↺</span>
     </div>
-    <div class="preset-buttons" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;">
+    <div class="graphic-eq-wrapper">
+        <canvas id="graphicEqCanvas"></canvas>
+        <div class="eq-value-tooltip" id="eqTooltip" style="display:none;">0 dB</div>
+        <div class="eq-grid-labels">
+            <!-- ستُملأ بال JavaScript -->
+        </div>
+    </div>
+    <div class="preset-buttons">
         <button class="preset-btn active" data-preset="flat">مسطح</button>
         <button class="preset-btn" data-preset="bass">جهير</button>
         <button class="preset-btn" data-preset="vocal">صوتي</button>
