@@ -680,7 +680,7 @@ function loadLyricsForCurrentSong() {
     switchUIMode();
 }
 
-// ========== دوال قائمة التشغيل ==========
+// ========== دوال قائمة التشغيل (محسنة) ==========
 function getAudioDuration(file) {
     return new Promise(resolve => {
         let tempAudio = new Audio();
@@ -689,7 +689,7 @@ function getAudioDuration(file) {
         tempAudio.addEventListener("loadedmetadata", () => {
             let dur = tempAudio.duration;
             URL.revokeObjectURL(url);
-            resolve(isNaN(dur) ? 0 : dur);
+            resolve(isFinite(dur) && dur > 0 ? dur : 0);
         });
         tempAudio.addEventListener("error", () => {
             URL.revokeObjectURL(url);
@@ -729,6 +729,7 @@ function renderPlaylistItem(index) {
         deleteSong(index);
     });
 
+    // السحب والإفلات
     div.addEventListener("dragstart", e => {
         e.dataTransfer.setData("text/plain", index.toString());
         div.classList.add("dragging");
@@ -747,6 +748,7 @@ function renderPlaylistItem(index) {
         if (from !== to && !isNaN(from) && !isNaN(to)) moveSong(from, to);
     });
 
+    // السحب للمس
     let touchStartY = 0;
     div.querySelector(".drag-handle").addEventListener("touchstart", e => {
         touchStartY = e.touches[0].clientY;
@@ -911,27 +913,47 @@ function importPlaylist(file) {
     reader.readAsText(file, "UTF-8");
 }
 
+// ⚡ دالة إضافة الملفات المحسنة
 async function addSongs(files) {
+    if (!files || files.length === 0) return;
+    showLoading();
+    let addedCount = 0;
     for (let file of files) {
-        let url = URL.createObjectURL(file);
-        allObjectURLs.push(url);
-        let duration = await getAudioDuration(file);
-        songs.push({
-            title: file.name.replace(/\.[^/.]+$/, ""),
-            artist: "فنان فضي",
-            src: url,
-            cover: "",
-            duration: duration
-        });
+        try {
+            // تحقق من أن الملف صالح وله حجم
+            if (!file || file.size === 0) continue;
+            let url = URL.createObjectURL(file);
+            let duration = await getAudioDuration(file);
+            allObjectURLs.push(url);
+            songs.push({
+                title: file.name.replace(/\.[^/.]+$/, ""),
+                artist: "فنان فضي",
+                src: url,
+                cover: "",
+                duration: duration
+            });
+            addedCount++;
+        } catch (err) {
+            console.warn("خطأ أثناء إضافة ملف:", file.name, err);
+        }
     }
     refreshPlaylist();
+    // إذا لم تكن هناك أغنية نشطة، شغل أول أغنية
     if (songs.length > 0 && !audio.src) {
         currentIndex = 0;
         loadSong(0);
-        if (!isAudioInitialized) initAudioContext();
+        if (!isAudioInitialized) {
+            await initAudioContext();
+        }
         updatePlaylistActive();
     }
     updatePlaylistCount();
+    hideLoading();
+    if (addedCount > 0) {
+        showToast("✅ تمت إضافة " + addedCount + " أغنية");
+    } else {
+        showToast("⚠️ لم يتم إضافة أي ملفات صالحة");
+    }
 }
 
 function stopAlbumRotation() { albumContainer.classList.remove("rotating"); }
@@ -986,7 +1008,6 @@ function applyBoostSettings() {
             filters[0].gain.value = bassLevelVal;
             document.getElementById("bassValue").innerText = Math.round(bassLevelVal / 24 * 100) + "%";
         }
-        // تطبيق قيم المعادل
         if (filters.length === GRAPHIC_EQ_BANDS) {
             eqValues.forEach((val, i) => { if (filters[i]) filters[i].gain.value = val; });
         }
@@ -1286,7 +1307,13 @@ document.getElementById("importPlaylistInput").addEventListener("change", e => {
 });
 document.getElementById("clearPlaylistBtn").addEventListener("click", clearAllPlaylist);
 
-fileInput.addEventListener("change", e => { addSongs(Array.from(e.target.files)); fileInput.value = ""; });
+// 🔥 ربط إضافة الملفات
+fileInput.addEventListener("change", e => {
+    if (e.target.files && e.target.files.length > 0) {
+        addSongs(Array.from(e.target.files));
+        fileInput.value = ""; // تفريغ المدخل ليسمح بإعادة اختيار نفس الملفات
+    }
+});
 
 document.getElementById("imageInput").addEventListener("change", e => {
     if (e.target.files[0]) {
