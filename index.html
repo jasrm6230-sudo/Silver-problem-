@@ -524,10 +524,37 @@
         }
         .advanced-controls h3 { text-align: center; color: #E8E8F2; margin-bottom: 20px; font-size: 22px; }
 
-        .palace-effect-controls, .audio-enhancement-controls, .analysis-panel, .advanced-settings {
+        .palace-effect-controls, .audio-enhancement-controls, .analysis-panel, .advanced-settings, .stereo-widener-controls {
             background: rgba(20,20,28,0.7); padding: 16px; border-radius: 20px; margin: 12px 0; border: 1px solid rgba(232,232,242,0.2);
         }
         .palace-slider, .enhancement-slider { width: 100%; height: 8px; background: linear-gradient(90deg, #A0A0B8, #E8E8F2); border-radius: 8px; }
+
+        /* ========== Stereo Widener ========== */
+        .stereo-widener-controls h4 {
+            margin-bottom: 8px;
+            color: #E8E8F2;
+            font-size: 15px;
+            text-shadow: 0 0 10px rgba(220,220,255,0.5);
+        }
+
+        .palace-btn {
+            background: linear-gradient(145deg, #1A1A24, #0A0A0D);
+            border: 1px solid rgba(232,232,242,0.5);
+            color: #E8E8F2;
+            padding: 7px 18px;
+            border-radius: 40px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 12px;
+            transition: all 0.25s;
+        }
+
+        .palace-btn:hover {
+            background: linear-gradient(145deg, #2A2A38, #3A3A4A);
+            border-color: #FFFFFF;
+            color: #FFFFFF;
+            transform: translateY(-2px);
+        }
 
         .spectrum-display {
             width: 100%; height: 150px; background: #0A0A0D; border-radius: 20px; border: 1px solid rgba(232,232,242,0.3); overflow: hidden;
@@ -569,7 +596,7 @@
         @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
         @keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(-50%) translateY(-20px); } }
 
-        /* ========== Graphic EQ (تصميم فضي فاخر) ========== */
+        /* ========== Graphic EQ ========== */
         .eq-container.graphic-eq {
             background: linear-gradient(165deg, rgba(28,28,40,0.85) 0%, rgba(12,12,20,0.95) 100%);
             border: 1px solid rgba(232,232,242,0.35); border-radius: 26px; padding: 22px 20px 20px;
@@ -686,6 +713,7 @@
             <div class="shortcut-item"><span>دوران الكاميرا</span><span class="shortcut-key">C</span></div>
             <div class="shortcut-item"><span>توفير الطاقة</span><span class="shortcut-key">P</span></div>
             <div class="shortcut-item"><span>القصر الصوتي</span><span class="shortcut-key">T</span></div>
+            <div class="shortcut-item"><span>توسيع الستيريو</span><span class="shortcut-key">W</span></div>
             <div class="shortcut-item"><span>إظهار/إخفاء اللوحة</span><span class="shortcut-key">H</span></div>
             <div class="shortcut-item"><span>👆 إيماءة: السحب لليسار</span><span class="shortcut-key">الأغنية التالية</span></div>
             <div class="shortcut-item"><span>👆 إيماءة: السحب لليمين</span><span class="shortcut-key">الأغنية السابقة</span></div>
@@ -703,6 +731,8 @@
             <div class="info-item"><span>يعطل المؤثرات البصرية لتقليل استهلاك CPU/GPU.</span><span class="info-badge">مفتاح P</span></div>
             <div class="info-section-title">🏰 معالج القصر</div>
             <div class="info-item"><span>يُضيف تأثير صدى (Reverb) عميق يحاكي القاعات الكبيرة.</span><span class="info-badge">مفتاح T</span></div>
+            <div class="info-section-title">🌐 توسيع الستيريو</div>
+            <div class="info-item"><span>0% = مونو | 100% = طبيعي | 200% = مسرح صوتي واسع.</span><span class="info-badge">مفتاح W</span></div>
             <div class="info-section-title">👆 إيماءات اللمس</div>
             <div class="info-item"><span>اسحب لليسار على المشغل = الأغنية التالية | اسحب لليمين = الأغنية السابقة.</span><span class="info-badge">سحب</span></div>
             <div class="info-section-title">📋 قائمة التشغيل</div>
@@ -797,6 +827,23 @@
                     </div>
                     <div id="palaceStatus" style="font-size:11px;color:#C0C0E0;margin-top:6px;"></div>
                 </div>
+
+                <!-- === Stereo Widener Panel === -->
+                <div class="stereo-widener-controls" id="stereoWidenerControls" style="display:none;">
+                    <h4>🌐 توسيع الستيريو (Stereo Widener)</h4>
+                    <div style="font-size:11px;color:#B0B0C0;margin-bottom:10px;">
+                        ✨ 0% = مونو | 100% = طبيعي | 200% = واسع جدًا
+                    </div>
+                    <div>
+                        <label>عرض الستيريو <span id="widenerValueDisplay">100%</span></label>
+                        <input type="range" class="palace-slider" id="widenerWidth" min="0" max="200" value="100">
+                    </div>
+                    <div style="margin-top:10px;">
+                        <button class="palace-btn" id="resetWidener">↺ إعادة تعيين (100%)</button>
+                    </div>
+                    <div id="widenerStatus" style="font-size:11px;color:#C0C0E0;margin-top:8px;"></div>
+                </div>
+
                 <div class="audio-enhancement-controls">
                     <h4>نظام تضخيم الصوت</h4>
                     <div>الصوت الأساسي <span id="volumeValue">70%</span></div>
