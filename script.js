@@ -1,6 +1,6 @@
 /* ============================================================
    المشغل الفضي الفاخر — script.js
-   نسخة مُصححة ومُحسّنة (كامل)
+   نسخة كاملة مع Stereo Widener
    ============================================================ */
 (function () {
     "use strict";
@@ -12,7 +12,6 @@
     const EQ_MIN_DB = -12;
     const EQ_MAX_DB = 12;
 
-    // 18 باند مرتّبة تصاعديًا 32Hz → 20kHz (بدون تكرار)
     const EQ_FREQS = [
         32, 50, 80, 125, 200, 315, 500, 800, 1200,
         2000, 3150, 5000, 8000, 10000, 12500, 16000, 18000, 20000
@@ -28,7 +27,6 @@
     /* ============================================================
        (2) دوال مساعدة
        ============================================================ */
-
     function parseTime(str) {
         if (typeof str !== "string") return NaN;
         const t = str.trim().replace(",", ".").split(":");
@@ -43,7 +41,6 @@
         return isNaN(val) ? NaN : val;
     }
 
-    // إصلاح: معامل القسمة حسب عدد أرقام الكسر (10^length)
     function parseLRC(content) {
         const lines = content.split(/\r?\n/);
         const entries = [];
@@ -103,7 +100,6 @@
             if (parts.length !== 2) continue;
             const start = parseTime(parts[0]);
             const end = parseTime(parts[1]);
-            // إصلاح: تجاهل التوقيتات غير الصالحة
             if (isNaN(start) || isNaN(end)) continue;
             const text = lines.slice(2).join(" ").replace(/<[^>]*>/g, "").trim();
             if (text) cues.push({ start, end, text });
@@ -143,7 +139,6 @@
         setTimeout(() => toast.remove(), 2500);
     }
 
-    // إصلاح: debounce للحفظ لتجنب الكتابة المستمرة في localStorage
     let _saveTimer = null;
     function scheduleSave() {
         if (_saveTimer) clearTimeout(_saveTimer);
@@ -188,6 +183,14 @@
     let resumeAttempts = 0;
     let powerSave = false;
 
+    // === Stereo Widener ===
+    let widenerInput = null;
+    let widenerOutput = null;
+    let widenerSideToL = null;
+    let widenerSideToR = null;
+    let widenerEnabled = false;
+    let widenerValue = 1.0;   // 1.0 = طبيعي، 0 = مونو، 2 = واسع جدًا
+
     const songLyricsMap = new Map();
     let allObjectURLs = [];
     let srtCues = [];
@@ -198,7 +201,6 @@
     let lastStageIndex = -1;
     let stageTransitionTimeout = null;
 
-    // إصلاح الأداء: مؤشرات متزايدة بدل المرور على كامل المصفوفة
     let _lastWordIdx = -1;
     let _lastCueIdx = -1;
 
@@ -268,13 +270,13 @@
     let advancedPanelVisible = true;
 
     /* ============================================================
-       (5) Media Session — يُسجَّل مرة واحدة فقط
+       (5) Media Session
        ============================================================ */
     function initMediaSessionHandlers() {
         if (!("mediaSession" in navigator)) return;
         const safeSet = (action, handler) => {
             try { navigator.mediaSession.setActionHandler(action, handler); }
-            catch (_) { /* بعض المتصفحات لا تدعم كل الأزرار */ }
+            catch (_) {}
         };
         safeSet("play",          () => { if (!isPlaying) playPauseBtn.click(); });
         safeSet("pause",         () => { if (isPlaying)  playPauseBtn.click(); });
@@ -299,7 +301,7 @@
     }
 
     /* ============================================================
-       (6) الموجة الصوتية (Waveform)
+       (6) الموجة الصوتية
        ============================================================ */
     function resizeWaveformCanvas() {
         const rect = waveformContainer.getBoundingClientRect();
@@ -337,7 +339,6 @@
         return peaks.map(p => p / globalMax);
     }
 
-    // إصلاح: استخدام OfflineAudioContext عند عدم وجود سياق رئيسي
     async function loadAudioBuffer(url) {
         try {
             const response = await fetch(url);
@@ -445,7 +446,7 @@
     }
 
     /* ============================================================
-       (8) السحب على الموجة للتنقل
+       (8) السحب على الموجة
        ============================================================ */
     function handleWaveformSeek(clientX) {
         if (audio.duration && waveformData) {
@@ -529,7 +530,7 @@
     musicPlayerContainer.addEventListener("touchend", () => { touchHandled = false; });
 
     /* ============================================================
-       (10) نظام الكلمات (Lyrics)
+       (10) نظام الكلمات
        ============================================================ */
     function resetLyricsCache() {
         _lastWordIdx = -1;
@@ -545,7 +546,6 @@
                 }
                 return;
             }
-            // إصلاح الأداء: مؤشر متزايد
             while (_lastWordIdx + 1 < wordTimeline.length &&
                    wordTimeline[_lastWordIdx + 1].time <= currentTime) {
                 _lastWordIdx++;
@@ -564,7 +564,6 @@
                 }
                 return;
             }
-            // مؤشر متزايد
             while (_lastCueIdx + 1 < srtCues.length &&
                    srtCues[_lastCueIdx + 1].start <= currentTime) {
                 _lastCueIdx++;
@@ -777,7 +776,7 @@
     }
 
     /* ============================================================
-       (11) قائمة التشغيل — إصلاح XSS
+       (11) قائمة التشغيل
        ============================================================ */
     function getAudioDuration(file) {
         return new Promise(resolve => {
@@ -801,7 +800,6 @@
         playlistCountSpan.textContent = songs.length;
     }
 
-    // إصلاح XSS: بناء عناصر DOM بدل innerHTML
     function renderPlaylistItem(index) {
         const song = songs[index];
         const div = document.createElement("div");
@@ -820,8 +818,8 @@
 
         const nameSpan = document.createElement("span");
         nameSpan.className = "song-name";
-        nameSpan.title = song.title;            // ← لا يُفسَّر HTML
-        nameSpan.textContent = song.title;      // ← آمن تمامًا
+        nameSpan.title = song.title;
+        nameSpan.textContent = song.title;
 
         const durSpan = document.createElement("span");
         durSpan.className = "song-duration";
@@ -851,7 +849,6 @@
             deleteSong(index);
         });
 
-        // سحب وإفلات الماوس
         div.addEventListener("dragstart", e => {
             e.dataTransfer.setData("text/plain", index.toString());
             div.classList.add("dragging");
@@ -870,7 +867,6 @@
             if (!isNaN(from) && !isNaN(to) && from !== to) moveSong(from, to);
         });
 
-        // سحب وإفلات اللمس
         let tStartY = 0;
         handle.addEventListener("touchstart", e => {
             tStartY = e.touches[0].clientY;
@@ -1192,6 +1188,85 @@
         return buffer;
     }
 
+    /* ============================================================
+       === Stereo Widener — Mid/Side Matrix ===
+       ============================================================ */
+    function initStereoWidener() {
+        widenerInput  = audioContext.createGain();
+        widenerOutput = audioContext.createGain();
+
+        const splitter = audioContext.createChannelSplitter(2);
+        const merger   = audioContext.createChannelMerger(2);
+
+        // Mid = (L + R) / 2
+        const midL = audioContext.createGain(); midL.gain.value = 0.5;
+        const midR = audioContext.createGain(); midR.gain.value = 0.5;
+        const midSum = audioContext.createGain();
+
+        // Side = (L - R) / 2
+        const sideL = audioContext.createGain(); sideL.gain.value = 0.5;
+        const sideR = audioContext.createGain(); sideR.gain.value = -0.5;
+        const sideSum = audioContext.createGain();
+
+        // Left out  = Mid + w·Side
+        const midToL = audioContext.createGain(); midToL.gain.value = 1;
+        widenerSideToL = audioContext.createGain(); widenerSideToL.gain.value = 1;
+        const outL = audioContext.createGain();
+
+        // Right out = Mid - w·Side
+        const midToR = audioContext.createGain(); midToR.gain.value = 1;
+        widenerSideToR = audioContext.createGain(); widenerSideToR.gain.value = -1;
+        const outR = audioContext.createGain();
+
+        widenerInput.connect(splitter);
+
+        splitter.connect(midL, 0);
+        splitter.connect(midR, 1);
+        midL.connect(midSum);
+        midR.connect(midSum);
+
+        splitter.connect(sideL, 0);
+        splitter.connect(sideR, 1);
+        sideL.connect(sideSum);
+        sideR.connect(sideSum);
+
+        midSum.connect(midToL);
+        midSum.connect(midToR);
+        sideSum.connect(widenerSideToL);
+        sideSum.connect(widenerSideToR);
+
+        midToL.connect(outL);
+        widenerSideToL.connect(outL);
+        midToR.connect(outR);
+        widenerSideToR.connect(outR);
+
+        outL.connect(merger, 0, 0);
+        outR.connect(merger, 0, 1);
+
+        merger.connect(widenerOutput);
+    }
+
+    function setWidenerWidth(w) {
+        widenerValue = Math.max(0, Math.min(2, w));
+        if (widenerSideToL && widenerSideToR) {
+            widenerSideToL.gain.value =  widenerValue;
+            widenerSideToR.gain.value = -widenerValue;
+        }
+        scheduleSave();
+    }
+
+    function applyWidener() {
+        if (!widenerSideToL || !widenerSideToR) return;
+        if (widenerEnabled) {
+            widenerSideToL.gain.value =  widenerValue;
+            widenerSideToR.gain.value = -widenerValue;
+        } else {
+            // w = 1 → transparent تمامًا
+            widenerSideToL.gain.value =  1;
+            widenerSideToR.gain.value = -1;
+        }
+    }
+
     async function initAudioContext() {
         if (isAudioInitialized) return;
         try {
@@ -1204,7 +1279,6 @@
             analyser.fftSize = 2048;
             analyser.smoothingTimeConstant = 0.7;
 
-            // إصلاح: استخدام EQ_FREQS الموحّد
             filters = EQ_FREQS.map((freq, i) => {
                 const filter = audioContext.createBiquadFilter();
                 if (i === 0) filter.type = "lowshelf";
@@ -1233,12 +1307,17 @@
             currentNode.connect(convolverNode);
             convolverNode.connect(wetGain);
             wetGain.connect(mixGain);
-            mixGain.connect(analyser);
+
+            // === Stereo Widener inline ===
+            initStereoWidener();
+            mixGain.connect(widenerInput);
+            widenerOutput.connect(analyser);
             analyser.connect(audioContext.destination);
 
             isAudioInitialized = true;
             applyBoostSettings();
             loadSettings();
+            applyWidener();
             startSpectrumLoop();
             startVisualizerLoop();
         } catch (e) {
@@ -1442,6 +1521,54 @@
         palaceToggleChip.classList.toggle("palace-active", palaceEnabled);
     };
 
+    /* ============================================================
+       === (14.b) Stereo Widener Handlers ===
+       ============================================================ */
+    const stereoWidenerChip      = document.getElementById("stereoWidenerChip");
+    const stereoWidenerControls  = document.getElementById("stereoWidenerControls");
+    const widenerSlider          = document.getElementById("widenerWidth");
+    const widenerValueDisplay    = document.getElementById("widenerValueDisplay");
+    const widenerStatus          = document.getElementById("widenerStatus");
+    const resetWidenerBtn        = document.getElementById("resetWidener");
+
+    if (stereoWidenerChip) {
+        stereoWidenerChip.onclick = () => {
+            widenerEnabled = !widenerEnabled;
+            stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
+            if (stereoWidenerControls) {
+                stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
+            }
+            applyWidener();
+            if (widenerStatus) {
+                widenerStatus.textContent = widenerEnabled
+                    ? "🌐 التوسيع نشط — " + Math.round(widenerValue * 100) + "%"
+                    : "التوسيع متوقف (الصوت أصلي)";
+            }
+        };
+    }
+
+    if (widenerSlider) {
+        widenerSlider.oninput = (e) => {
+            const percent = parseInt(e.target.value, 10);
+            if (widenerValueDisplay) widenerValueDisplay.textContent = percent + "%";
+            setWidenerWidth(percent / 100);
+            applyWidener();
+            if (widenerStatus && widenerEnabled) {
+                widenerStatus.textContent = "🌐 التوسيع نشط — " + percent + "%";
+            }
+        };
+    }
+
+    if (resetWidenerBtn) {
+        resetWidenerBtn.onclick = () => {
+            if (widenerSlider) widenerSlider.value = 100;
+            if (widenerValueDisplay) widenerValueDisplay.textContent = "100%";
+            setWidenerWidth(1);
+            applyWidener();
+            if (widenerStatus) widenerStatus.textContent = "↺ تم الإرجاع للوضع الطبيعي";
+        };
+    }
+
     advancedToggleChip.onclick = () => {
         advancedPanelVisible = !advancedPanelVisible;
         advancedSection.classList.toggle("hidden-panel", !advancedPanelVisible);
@@ -1499,6 +1626,7 @@
             else if (action === "advanced") advancedToggleChip.click();
             else if (action === "info") infoChip.click();
             else if (action === "shortcuts") shortcutsFab.click();
+            else if (action === "widener" && stereoWidenerChip) stereoWidenerChip.click();
         });
     });
 
@@ -1554,7 +1682,7 @@
     });
 
     /* ============================================================
-       (17) المعادل الرسومي (Graphic EQ)
+       (17) المعادل الرسومي
        ============================================================ */
     function initGraphicEQ() {
         eqCanvas = document.getElementById("graphicEqCanvas");
@@ -1564,7 +1692,6 @@
         const labelsContainer = document.querySelector(".eq-grid-labels");
         if (labelsContainer) {
             labelsContainer.innerHTML = "";
-            // إصلاح: لا نعكس التسميات — bass على اليمين في RTL
             EQ_LABELS.forEach(lbl => {
                 const span = document.createElement("span");
                 span.textContent = lbl;
@@ -1649,7 +1776,6 @@
         const gH = h - padY * 2;
 
         eqPoints = eqValues.map((db, i) => {
-            // bass (index 0) على اليمين
             const x = padX + gW - (i / (GRAPHIC_EQ_BANDS - 1)) * gW;
             const norm = (db - EQ_MIN_DB) / (EQ_MAX_DB - EQ_MIN_DB);
             const y = padY + gH - norm * gH;
@@ -1825,7 +1951,7 @@
     }
 
     /* ============================================================
-       (18) الإعدادات (حفظ/تحميل)
+       (18) الإعدادات
        ============================================================ */
     function saveSettings() {
         try {
@@ -1834,10 +1960,13 @@
                 boostLevel,
                 reverbSliderValue,
                 eqValues: [...eqValues],
-                volume: audio.volume
+                volume: audio.volume,
+                // === Stereo Widener ===
+                widenerEnabled,
+                widenerValue
             };
             localStorage.setItem("silverPlayerSettings_v2", JSON.stringify(settings));
-        } catch (_) { /* quota exceeded - تجاهل */ }
+        } catch (_) {}
     }
 
     function loadSettings() {
@@ -1877,6 +2006,24 @@
                 drawEqCanvas();
                 syncBassSliderFromEq();
             }
+
+            // === Stereo Widener state ===
+            if (typeof s.widenerEnabled === "boolean") widenerEnabled = s.widenerEnabled;
+            if (typeof s.widenerValue === "number")   widenerValue   = s.widenerValue;
+
+            if (widenerSlider) {
+                widenerSlider.value = Math.round(widenerValue * 100);
+            }
+            if (widenerValueDisplay) {
+                widenerValueDisplay.textContent = Math.round(widenerValue * 100) + "%";
+            }
+            if (stereoWidenerChip) {
+                stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
+            }
+            if (stereoWidenerControls) {
+                stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
+            }
+
             applyBoostSettings();
         } catch (e) {
             console.warn("إعدادات غير صالحة:", e);
@@ -1952,6 +2099,8 @@
             case "p": case "P": powerSaveChip.click(); break;
             case "t": case "T": palaceToggleChip.click(); break;
             case "h": case "H": advancedToggleChip.click(); break;
+            // === Stereo Widener shortcut ===
+            case "w": case "W": if (stereoWidenerChip) stereoWidenerChip.click(); break;
         }
     });
 
@@ -2036,7 +2185,6 @@
         switchUIMode();
         enableSlow3D(false);
 
-        // أعمدة الفيجوالايزر
         for (let i = 0; i < 20; i++) {
             const bar = document.createElement("div");
             bar.classList.add("bar");
@@ -2047,11 +2195,17 @@
         refreshPlaylist();
         updatePlaylistCount();
         initGraphicEQ();
-        // ملاحظة: loadSettings يُستدعى داخل initAudioContext بعد تهيئة الـ filters
-        // لكن نستدعي هنا أيضًا لتحميل قيم الصوت الأساسية إن لم يكن السياق جاهزًا
         loadSettings();
         createStars();
         initMediaSessionHandlers();
+
+        // === Stereo Widener initial UI sync ===
+        if (stereoWidenerChip) {
+            stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
+        }
+        if (stereoWidenerControls) {
+            stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
+        }
     }
 
     if (document.readyState === "loading") {
