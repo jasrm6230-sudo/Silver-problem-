@@ -1,6 +1,7 @@
 /* ============================================================
-   المشغل الفضي الفاخر — script.js
-   نسخة كاملة مع Stereo Widener
+   المشغل الفضي الفاخر — script.js (النسخة النهائية الكاملة)
+   Media Session + إيماءات + قائمة متكاملة + Stereo Widener
+   + Graphic EQ + Channel Balance
    ============================================================ */
 (function () {
     "use strict";
@@ -24,6 +25,8 @@
     const MAX_RESUME_ATTEMPTS = 3;
     const RESUME_INTERVAL = 10000;
 
+    const DEFAULT_COVER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E";
+
     /* ============================================================
        (2) دوال مساعدة
        ============================================================ */
@@ -31,13 +34,9 @@
         if (typeof str !== "string") return NaN;
         const t = str.trim().replace(",", ".").split(":");
         let val;
-        if (t.length === 3) {
-            val = 3600 * parseFloat(t[0]) + 60 * parseFloat(t[1]) + parseFloat(t[2]);
-        } else if (t.length === 2) {
-            val = 60 * parseFloat(t[0]) + parseFloat(t[1]);
-        } else {
-            val = parseFloat(t[0]);
-        }
+        if (t.length === 3)      val = 3600 * parseFloat(t[0]) + 60 * parseFloat(t[1]) + parseFloat(t[2]);
+        else if (t.length === 2) val = 60 * parseFloat(t[0]) + parseFloat(t[1]);
+        else                     val = parseFloat(t[0]);
         return isNaN(val) ? NaN : val;
     }
 
@@ -53,9 +52,7 @@
                 const minutes = parseInt(match[1], 10);
                 const seconds = parseInt(match[2], 10);
                 let frac = 0;
-                if (match[3]) {
-                    frac = parseInt(match[3], 10) / Math.pow(10, match[3].length);
-                }
+                if (match[3]) frac = parseInt(match[3], 10) / Math.pow(10, match[3].length);
                 times.push(60 * minutes + seconds + frac);
             }
             const text = line.replace(/\[\d{2}:\d{2}(?:[.:]\d{1,3})?\]/g, "").trim();
@@ -99,7 +96,7 @@
             const parts = timingLine.split("-->");
             if (parts.length !== 2) continue;
             const start = parseTime(parts[0]);
-            const end = parseTime(parts[1]);
+            const end   = parseTime(parts[1]);
             if (isNaN(start) || isNaN(end)) continue;
             const text = lines.slice(2).join(" ").replace(/<[^>]*>/g, "").trim();
             if (text) cues.push({ start, end, text });
@@ -189,7 +186,21 @@
     let widenerSideToL = null;
     let widenerSideToR = null;
     let widenerEnabled = false;
-    let widenerValue = 1.0;   // 1.0 = طبيعي، 0 = مونو، 2 = واسع جدًا
+    let widenerValue = 1.0;
+
+    // === Channel Balance ===
+    let balanceSplitter = null;
+    let balanceMerger = null;
+    let balanceOutput = null;
+    let bal_L_fromL = null;
+    let bal_L_fromR = null;
+    let bal_R_fromL = null;
+    let bal_R_fromR = null;
+    let balanceValue = 0;
+    let balanceLeftTrim = 1.0;
+    let balanceRightTrim = 1.0;
+    let balanceEnabled = false;
+    let balanceSwapped = false;
 
     const songLyricsMap = new Map();
     let allObjectURLs = [];
@@ -222,48 +233,48 @@
     /* ============================================================
        (4) عناصر DOM
        ============================================================ */
-    const playPauseBtn     = document.getElementById("playPauseBtn");
-    const prevBtn          = document.getElementById("prevBtn");
-    const nextBtn          = document.getElementById("nextBtn");
-    const repeatBtn        = document.getElementById("repeatBtn");
-    const shuffleBtn       = document.getElementById("shuffleBtn");
-    const currentTimeSpan  = document.getElementById("currentTime");
-    const durationSpan     = document.getElementById("duration");
-    const volumeSlider     = document.getElementById("volumeSlider");
-    const volumeProgress   = document.getElementById("volumeProgress");
-    const fileInput        = document.getElementById("fileInput");
-    const playlistDiv      = document.getElementById("playlist");
-    const songTitleSpan    = document.getElementById("songTitle");
-    const songArtistSpan   = document.getElementById("songArtist");
-    const albumImage       = document.getElementById("albumImage");
-    const albumContainer   = document.getElementById("albumArtContainer");
-    const loadingOverlay   = document.getElementById("loadingOverlay");
-    const lyricsWordDiv    = document.getElementById("lyricsWord");
-    const stageContainer   = document.getElementById("stageContainer");
-    const prevWordDiv      = document.getElementById("prevWord");
-    const currentWordDiv   = document.getElementById("currentWord");
-    const nextWordDiv      = document.getElementById("nextWord");
-    const srtInput         = document.getElementById("srtInput");
-    const clearSrtBtn      = document.getElementById("clearSrtBtn");
-    const toggleModeBtn    = document.getElementById("toggleModeBtn");
-    const srtStatusMsg     = document.getElementById("srtStatusMsg");
-    const waveformCanvas   = document.getElementById("waveformCanvas");
-    const waveformContainer= document.getElementById("waveformContainer");
+    const playPauseBtn        = document.getElementById("playPauseBtn");
+    const prevBtn             = document.getElementById("prevBtn");
+    const nextBtn             = document.getElementById("nextBtn");
+    const repeatBtn           = document.getElementById("repeatBtn");
+    const shuffleBtn          = document.getElementById("shuffleBtn");
+    const currentTimeSpan     = document.getElementById("currentTime");
+    const durationSpan        = document.getElementById("duration");
+    const volumeSlider        = document.getElementById("volumeSlider");
+    const volumeProgress      = document.getElementById("volumeProgress");
+    const fileInput           = document.getElementById("fileInput");
+    const playlistDiv         = document.getElementById("playlist");
+    const songTitleSpan       = document.getElementById("songTitle");
+    const songArtistSpan      = document.getElementById("songArtist");
+    const albumImage          = document.getElementById("albumImage");
+    const albumContainer      = document.getElementById("albumArtContainer");
+    const loadingOverlay      = document.getElementById("loadingOverlay");
+    const lyricsWordDiv       = document.getElementById("lyricsWord");
+    const stageContainer      = document.getElementById("stageContainer");
+    const prevWordDiv         = document.getElementById("prevWord");
+    const currentWordDiv      = document.getElementById("currentWord");
+    const nextWordDiv         = document.getElementById("nextWord");
+    const srtInput            = document.getElementById("srtInput");
+    const clearSrtBtn         = document.getElementById("clearSrtBtn");
+    const toggleModeBtn       = document.getElementById("toggleModeBtn");
+    const srtStatusMsg        = document.getElementById("srtStatusMsg");
+    const waveformCanvas      = document.getElementById("waveformCanvas");
+    const waveformContainer   = document.getElementById("waveformContainer");
     const waveformClickTarget = document.getElementById("waveformClickTarget");
-    const visualizerDiv    = document.getElementById("visualizer");
-    const spectrumCanvas   = document.getElementById("spectrumCanvas");
-    const ctx              = spectrumCanvas.getContext("2d");
-    const advancedSection  = document.getElementById("advancedSection");
-    const advancedToggleChip = document.getElementById("advancedToggleChip");
-    const palaceControls   = document.getElementById("palaceEffectControls");
-    const playerSection    = document.getElementById("playerSection");
-    const dropOverlay      = document.getElementById("dropOverlay");
-    const burgerMenuBtn    = document.getElementById("burgerMenuBtn");
-    const burgerDropdown   = document.getElementById("burgerDropdown");
-    const playlistCountSpan= document.getElementById("playlistCount");
-    const musicPlayerContainer = document.getElementById("musicPlayerContainer");
-    const eqTooltip        = document.getElementById("eqTooltip");
-    const resetEqBtn       = document.getElementById("resetEqBtn");
+    const visualizerDiv       = document.getElementById("visualizer");
+    const spectrumCanvas      = document.getElementById("spectrumCanvas");
+    const ctx                 = spectrumCanvas.getContext("2d");
+    const advancedSection     = document.getElementById("advancedSection");
+    const advancedToggleChip  = document.getElementById("advancedToggleChip");
+    const palaceControls      = document.getElementById("palaceEffectControls");
+    const playerSection       = document.getElementById("playerSection");
+    const dropOverlay         = document.getElementById("dropOverlay");
+    const burgerMenuBtn       = document.getElementById("burgerMenuBtn");
+    const burgerDropdown      = document.getElementById("burgerDropdown");
+    const playlistCountSpan   = document.getElementById("playlistCount");
+    const musicPlayerContainer= document.getElementById("musicPlayerContainer");
+    const eqTooltip           = document.getElementById("eqTooltip");
+    const resetEqBtn          = document.getElementById("resetEqBtn");
 
     let waveformCtx = waveformCanvas.getContext("2d");
     let waveformData = null;
@@ -951,7 +962,7 @@
             audio.src = "";
             songTitleSpan.textContent = "🎵 أضف موسيقى";
             songArtistSpan.textContent = "فنان فضي";
-            albumImage.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E";
+            albumImage.src = DEFAULT_COVER;
             waveformData = null;
             drawWaveform(0, 1);
             srtCues = [];
@@ -1088,7 +1099,7 @@
         else showToast("⚠️ لم يتم إضافة أي ملفات صالحة");
     }
 
-    function stopAlbumRotation() { albumContainer.classList.remove("rotating"); }
+    function stopAlbumRotation()  { albumContainer.classList.remove("rotating"); }
     function startAlbumRotation() { if (isPlaying) albumContainer.classList.add("rotating"); }
     function showLoading() { loadingOverlay.style.display = "flex"; }
     function hideLoading() { loadingOverlay.style.display = "none"; }
@@ -1099,8 +1110,7 @@
         audio.src = songs[index].src;
         songTitleSpan.textContent = songs[index].title;
         songArtistSpan.textContent = songs[index].artist || "فنان فضي";
-        albumImage.src = songs[index].cover ||
-            "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E";
+        albumImage.src = songs[index].cover || DEFAULT_COVER;
         waveformData = null;
         if (songs[index].src) loadAudioBuffer(songs[index].src);
         loadLyricsForCurrentSong();
@@ -1198,22 +1208,18 @@
         const splitter = audioContext.createChannelSplitter(2);
         const merger   = audioContext.createChannelMerger(2);
 
-        // Mid = (L + R) / 2
         const midL = audioContext.createGain(); midL.gain.value = 0.5;
         const midR = audioContext.createGain(); midR.gain.value = 0.5;
         const midSum = audioContext.createGain();
 
-        // Side = (L - R) / 2
         const sideL = audioContext.createGain(); sideL.gain.value = 0.5;
         const sideR = audioContext.createGain(); sideR.gain.value = -0.5;
         const sideSum = audioContext.createGain();
 
-        // Left out  = Mid + w·Side
         const midToL = audioContext.createGain(); midToL.gain.value = 1;
         widenerSideToL = audioContext.createGain(); widenerSideToL.gain.value = 1;
         const outL = audioContext.createGain();
 
-        // Right out = Mid - w·Side
         const midToR = audioContext.createGain(); midToR.gain.value = 1;
         widenerSideToR = audioContext.createGain(); widenerSideToR.gain.value = -1;
         const outR = audioContext.createGain();
@@ -1261,19 +1267,113 @@
             widenerSideToL.gain.value =  widenerValue;
             widenerSideToR.gain.value = -widenerValue;
         } else {
-            // w = 1 → transparent تمامًا
             widenerSideToL.gain.value =  1;
             widenerSideToR.gain.value = -1;
         }
     }
 
+    /* ============================================================
+       === Channel Balance — 4-Gain Cross Routing ===
+       ============================================================ */
+    function initChannelBalance() {
+        balanceSplitter = audioContext.createChannelSplitter(2);
+        balanceMerger   = audioContext.createChannelMerger(2);
+        balanceOutput   = audioContext.createGain();
+        bal_L_fromL = audioContext.createGain();
+        bal_L_fromR = audioContext.createGain();
+        bal_R_fromL = audioContext.createGain();
+        bal_R_fromR = audioContext.createGain();
+
+        // الحالة الطبيعية: L→L، R→R
+        bal_L_fromL.gain.value = 1;
+        bal_R_fromR.gain.value = 1;
+        bal_L_fromR.gain.value = 0;
+        bal_R_fromL.gain.value = 0;
+
+        balanceSplitter.connect(bal_L_fromL, 0);
+        balanceSplitter.connect(bal_R_fromL, 0);
+        balanceSplitter.connect(bal_L_fromR, 1);
+        balanceSplitter.connect(bal_R_fromR, 1);
+
+        bal_L_fromL.connect(balanceMerger, 0, 0);
+        bal_L_fromR.connect(balanceMerger, 0, 0);
+        bal_R_fromL.connect(balanceMerger, 0, 1);
+        bal_R_fromR.connect(balanceMerger, 0, 1);
+
+        balanceMerger.connect(balanceOutput);
+    }
+
+    function applyChannelBalance() {
+        if (!bal_L_fromL) return;
+        if (!balanceEnabled) {
+            bal_L_fromL.gain.value = 1;
+            bal_L_fromR.gain.value = 0;
+            bal_R_fromL.gain.value = 0;
+            bal_R_fromR.gain.value = 1;
+            return;
+        }
+
+        let balL = 1, balR = 1;
+        if (balanceValue < 0)      balR = 1 + balanceValue / 100;
+        else if (balanceValue > 0) balL = 1 - balanceValue / 100;
+
+        const finalL = balanceLeftTrim  * Math.max(0, balL);
+        const finalR = balanceRightTrim * Math.max(0, balR);
+        const now = audioContext.currentTime;
+
+        if (balanceSwapped) {
+            bal_L_fromL.gain.setTargetAtTime(0,      now, 0.02);
+            bal_L_fromR.gain.setTargetAtTime(finalL, now, 0.02);
+            bal_R_fromL.gain.setTargetAtTime(finalR, now, 0.02);
+            bal_R_fromR.gain.setTargetAtTime(0,      now, 0.02);
+        } else {
+            bal_L_fromL.gain.setTargetAtTime(finalL, now, 0.02);
+            bal_L_fromR.gain.setTargetAtTime(0,      now, 0.02);
+            bal_R_fromL.gain.setTargetAtTime(0,      now, 0.02);
+            bal_R_fromR.gain.setTargetAtTime(finalR, now, 0.02);
+        }
+        scheduleSave();
+    }
+
+    function playBalanceTestTone(side) {
+        if (!audioContext || !balanceOutput) {
+            showToast("⚠️ شغّل الموسيقى أولاً");
+            return;
+        }
+        if (audioContext.state === "suspended") audioContext.resume().catch(() => {});
+
+        const osc = audioContext.createOscillator();
+        const env = audioContext.createGain();
+        const mrg = audioContext.createChannelMerger(2);
+        const now = audioContext.currentTime;
+
+        osc.type = "sine";
+        osc.frequency.value = 660;
+        env.gain.setValueAtTime(0.0001, now);
+        env.gain.linearRampToValueAtTime(0.20, now + 0.04);
+        env.gain.setValueAtTime(0.20, now + 0.38);
+        env.gain.linearRampToValueAtTime(0.0001, now + 0.50);
+
+        if (side === "left") env.connect(mrg, 0, 0);
+        else                 env.connect(mrg, 0, 1);
+
+        mrg.connect(balanceOutput);
+        osc.connect(env);
+        osc.start(now);
+        osc.stop(now + 0.55);
+        osc.onended = () => { try { env.disconnect(); mrg.disconnect(); } catch (_) {} };
+    }
+
+    /* ============================================================
+       (13) تهيئة AudioContext
+       ============================================================ */
     async function initAudioContext() {
         if (isAudioInitialized) return;
         try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
             if (audioContext.state === "suspended") await audioContext.resume();
 
-            source = audioContext.createMediaElementSource(audio);
+            source   = audioContext.createMediaElementSource(audio);
             gainNode = audioContext.createGain();
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 2048;
@@ -1308,16 +1408,20 @@
             convolverNode.connect(wetGain);
             wetGain.connect(mixGain);
 
-            // === Stereo Widener inline ===
+            // === Stereo Widener + Channel Balance ===
             initStereoWidener();
+            initChannelBalance();
+
             mixGain.connect(widenerInput);
-            widenerOutput.connect(analyser);
+            widenerOutput.connect(balanceSplitter);
+            balanceOutput.connect(analyser);
             analyser.connect(audioContext.destination);
 
             isAudioInitialized = true;
             applyBoostSettings();
             loadSettings();
             applyWidener();
+            applyChannelBalance();
             startSpectrumLoop();
             startVisualizerLoop();
         } catch (e) {
@@ -1334,7 +1438,7 @@
             analyser.getByteFrequencyData(dataArray);
             const w = spectrumCanvas.clientWidth;
             const h = spectrumCanvas.clientHeight;
-            if (spectrumCanvas.width !== w) spectrumCanvas.width = w;
+            if (spectrumCanvas.width !== w)  spectrumCanvas.width  = w;
             if (spectrumCanvas.height !== h) spectrumCanvas.height = h;
             ctx.clearRect(0, 0, w, h);
             for (let i = 0; i < 80; i++) {
@@ -1382,7 +1486,7 @@
     }
 
     /* ============================================================
-       (13) أزرار التحكم الأساسية
+       (14) أزرار التحكم الأساسية
        ============================================================ */
     playPauseBtn.onclick = async () => {
         if (!songs.length) { alert("أضف أغاني أولاً"); return; }
@@ -1461,7 +1565,7 @@
     prevBtn.onclick = () => { playPrev(); };
 
     /* ============================================================
-       (14) رقاقات الشريط العلوي
+       (15) الشريط العلوي — Chips
        ============================================================ */
     const boostChip = document.getElementById("boostChip");
     boostChip.onclick = () => {
@@ -1522,14 +1626,14 @@
     };
 
     /* ============================================================
-       === (14.b) Stereo Widener Handlers ===
+       (16) Stereo Widener Handlers
        ============================================================ */
-    const stereoWidenerChip      = document.getElementById("stereoWidenerChip");
-    const stereoWidenerControls  = document.getElementById("stereoWidenerControls");
-    const widenerSlider          = document.getElementById("widenerWidth");
-    const widenerValueDisplay    = document.getElementById("widenerValueDisplay");
-    const widenerStatus          = document.getElementById("widenerStatus");
-    const resetWidenerBtn        = document.getElementById("resetWidener");
+    const stereoWidenerChip     = document.getElementById("stereoWidenerChip");
+    const stereoWidenerControls = document.getElementById("stereoWidenerControls");
+    const widenerSlider         = document.getElementById("widenerWidth");
+    const widenerValueDisplay   = document.getElementById("widenerValueDisplay");
+    const widenerStatus         = document.getElementById("widenerStatus");
+    const resetWidenerBtn       = document.getElementById("resetWidener");
 
     if (stereoWidenerChip) {
         stereoWidenerChip.onclick = () => {
@@ -1548,7 +1652,7 @@
     }
 
     if (widenerSlider) {
-        widenerSlider.oninput = (e) => {
+        widenerSlider.oninput = e => {
             const percent = parseInt(e.target.value, 10);
             if (widenerValueDisplay) widenerValueDisplay.textContent = percent + "%";
             setWidenerWidth(percent / 100);
@@ -1576,7 +1680,100 @@
     };
 
     /* ============================================================
-       (15) المودالات والقائمة الجانبية
+       (17) Channel Balance Handlers
+       ============================================================ */
+    const balanceChip         = document.getElementById("balanceChip");
+    const balanceControlsEl   = document.getElementById("balanceControls");
+    const balanceSliderEl     = document.getElementById("balanceSlider");
+    const balanceValueDisplay = document.getElementById("balanceValueDisplay");
+    const leftGainSlider      = document.getElementById("leftGainSlider");
+    const rightGainSlider     = document.getElementById("rightGainSlider");
+    const leftGainDisplay     = document.getElementById("leftGainDisplay");
+    const rightGainDisplay    = document.getElementById("rightGainDisplay");
+    const resetBalanceBtn     = document.getElementById("resetBalanceBtn");
+    const swapBalanceBtn      = document.getElementById("swapBalanceBtn");
+    const balanceStatusEl     = document.getElementById("balanceStatus");
+    const testLeftBtn         = document.getElementById("testLeftBtn");
+    const testRightBtn        = document.getElementById("testRightBtn");
+
+    function updateBalanceStatus() {
+        if (!balanceStatusEl) return;
+        if (!balanceEnabled) {
+            balanceStatusEl.textContent = "⚖️ التوازن متوقف — الصوت أصلي";
+            return;
+        }
+        balanceStatusEl.textContent =
+            "⚖️ نشط | يسار " + Math.round(balanceLeftTrim * 100) +
+            "% | يمين " + Math.round(balanceRightTrim * 100) +
+            "% | توازن " + balanceValue +
+            (balanceSwapped ? " | 🔄 مبدّل" : "");
+    }
+
+    if (balanceChip) {
+        balanceChip.onclick = () => {
+            balanceEnabled = !balanceEnabled;
+            balanceChip.classList.toggle("active-chip", balanceEnabled);
+            if (balanceControlsEl) balanceControlsEl.style.display = balanceEnabled ? "block" : "none";
+            applyChannelBalance();
+            updateBalanceStatus();
+        };
+    }
+
+    if (balanceSliderEl) {
+        balanceSliderEl.oninput = e => {
+            balanceValue = parseInt(e.target.value, 10);
+            if (balanceValueDisplay)
+                balanceValueDisplay.textContent = (balanceValue > 0 ? "+" : "") + balanceValue;
+            applyChannelBalance();
+            updateBalanceStatus();
+        };
+    }
+    if (leftGainSlider) {
+        leftGainSlider.oninput = e => {
+            balanceLeftTrim = parseInt(e.target.value, 10) / 100;
+            if (leftGainDisplay) leftGainDisplay.textContent = e.target.value + "%";
+            applyChannelBalance();
+            updateBalanceStatus();
+        };
+    }
+    if (rightGainSlider) {
+        rightGainSlider.oninput = e => {
+            balanceRightTrim = parseInt(e.target.value, 10) / 100;
+            if (rightGainDisplay) rightGainDisplay.textContent = e.target.value + "%";
+            applyChannelBalance();
+            updateBalanceStatus();
+        };
+    }
+    if (resetBalanceBtn) {
+        resetBalanceBtn.onclick = () => {
+            balanceValue = 0;
+            balanceLeftTrim = 1;
+            balanceRightTrim = 1;
+            balanceSwapped = false;
+            if (balanceSliderEl) balanceSliderEl.value = 0;
+            if (leftGainSlider)  leftGainSlider.value  = 100;
+            if (rightGainSlider) rightGainSlider.value = 100;
+            if (balanceValueDisplay) balanceValueDisplay.textContent = "0";
+            if (leftGainDisplay)  leftGainDisplay.textContent  = "100%";
+            if (rightGainDisplay) rightGainDisplay.textContent = "100%";
+            applyChannelBalance();
+            updateBalanceStatus();
+            showToast("↺ تم إرجاع التوازن للطبيعي");
+        };
+    }
+    if (swapBalanceBtn) {
+        swapBalanceBtn.onclick = () => {
+            balanceSwapped = !balanceSwapped;
+            applyChannelBalance();
+            updateBalanceStatus();
+            showToast(balanceSwapped ? "🔄 تم تبديل L/R" : "🔄 تم إلغاء التبديل");
+        };
+    }
+    if (testLeftBtn)  testLeftBtn.onclick  = () => playBalanceTestTone("left");
+    if (testRightBtn) testRightBtn.onclick = () => playBalanceTestTone("right");
+
+    /* ============================================================
+       (18) المودالات والقائمة الجانبية
        ============================================================ */
     const infoChip = document.getElementById("infoChip");
     const infoModal = document.getElementById("infoModal");
@@ -1619,14 +1816,15 @@
             const action = item.dataset.action;
             burgerDropdown.classList.remove("open");
             burgerMenuBtn.classList.remove("active");
-            if (action === "camera") cameraToggleChip.click();
-            else if (action === "palace") palaceToggleChip.click();
-            else if (action === "boost") boostChip.click();
+            if      (action === "camera")    cameraToggleChip.click();
+            else if (action === "palace")    palaceToggleChip.click();
+            else if (action === "boost")     boostChip.click();
             else if (action === "powersave") powerSaveChip.click();
-            else if (action === "advanced") advancedToggleChip.click();
-            else if (action === "info") infoChip.click();
+            else if (action === "advanced")  advancedToggleChip.click();
+            else if (action === "info")      infoChip.click();
             else if (action === "shortcuts") shortcutsFab.click();
             else if (action === "widener" && stereoWidenerChip) stereoWidenerChip.click();
+            else if (action === "balance" && balanceChip)       balanceChip.click();
         });
     });
 
@@ -1657,7 +1855,7 @@
     });
 
     /* ============================================================
-       (16) تأثيرات القصر
+       (19) تأثيرات القصر
        ============================================================ */
     document.getElementById("applyPalaceEffect").addEventListener("click", () => {
         const size = parseFloat(document.getElementById("palaceSize").value) / 100;
@@ -1682,7 +1880,7 @@
     });
 
     /* ============================================================
-       (17) المعادل الرسومي
+       (20) المعادل الرسومي
        ============================================================ */
     function initGraphicEQ() {
         eqCanvas = document.getElementById("graphicEqCanvas");
@@ -1885,7 +2083,6 @@
             e.preventDefault();
         }
     }
-
     function onEqMouseMove(e) {
         if (activeEqIndex === -1) return;
         const rect = eqCanvas.getBoundingClientRect();
@@ -1895,7 +2092,6 @@
         updateSingleBand(activeEqIndex, newDb);
         showEqTooltip(e.clientX, e.clientY, newDb);
     }
-
     function onEqMouseUp() {
         if (activeEqIndex !== -1) {
             hideEqTooltip();
@@ -1904,7 +2100,6 @@
             scheduleSave();
         }
     }
-
     function onEqTouchStart(e) {
         e.preventDefault();
         const t = e.touches[0];
@@ -1915,7 +2110,6 @@
             drawEqCanvas();
         }
     }
-
     function onEqTouchMove(e) {
         e.preventDefault();
         if (activeEqIndex === -1) return;
@@ -1927,7 +2121,6 @@
         updateSingleBand(activeEqIndex, newDb);
         showEqTooltip(t.clientX, t.clientY, newDb);
     }
-
     function onEqTouchEnd() {
         if (activeEqIndex !== -1) {
             hideEqTooltip();
@@ -1936,22 +2129,20 @@
             scheduleSave();
         }
     }
-
     function showEqTooltip(clientX, clientY, db) {
         if (!eqTooltip) return;
         const rect = eqCanvas.getBoundingClientRect();
         eqTooltip.textContent = (db > 0 ? "+" : "") + db.toFixed(1) + " dB";
         eqTooltip.style.left = (clientX - rect.left) + "px";
-        eqTooltip.style.top = (clientY - rect.top - 35) + "px";
+        eqTooltip.style.top  = (clientY - rect.top - 35) + "px";
         eqTooltip.style.display = "block";
     }
-
     function hideEqTooltip() {
         if (eqTooltip) eqTooltip.style.display = "none";
     }
 
     /* ============================================================
-       (18) الإعدادات
+       (21) الإعدادات — حفظ واستعادة
        ============================================================ */
     function saveSettings() {
         try {
@@ -1961,9 +2152,13 @@
                 reverbSliderValue,
                 eqValues: [...eqValues],
                 volume: audio.volume,
-                // === Stereo Widener ===
                 widenerEnabled,
-                widenerValue
+                widenerValue,
+                balanceEnabled,
+                balanceValue,
+                balanceLeftTrim,
+                balanceRightTrim,
+                balanceSwapped
             };
             localStorage.setItem("silverPlayerSettings_v2", JSON.stringify(settings));
         } catch (_) {}
@@ -1974,27 +2169,27 @@
         if (!saved) return;
         try {
             const s = JSON.parse(saved);
-            if (typeof s.volumeEnhance === "number") volumeEnhance = s.volumeEnhance;
-            if (typeof s.boostLevel === "number") boostLevel = s.boostLevel;
+            if (typeof s.volumeEnhance === "number")     volumeEnhance = s.volumeEnhance;
+            if (typeof s.boostLevel === "number")        boostLevel = s.boostLevel;
             if (typeof s.reverbSliderValue === "number") reverbSliderValue = s.reverbSliderValue;
-            if (typeof s.volume === "number") audio.volume = s.volume;
+            if (typeof s.volume === "number")            audio.volume = s.volume;
 
             volumeProgress.style.width = (100 * audio.volume) + "%";
 
             const vESlider = document.getElementById("volumeEnhancementSlider");
-            const vVSpan = document.getElementById("volumeValue");
+            const vVSpan   = document.getElementById("volumeValue");
             if (vESlider) vESlider.value = 100 * volumeEnhance;
-            if (vVSpan) vVSpan.textContent = Math.round(100 * volumeEnhance) + "%";
+            if (vVSpan)   vVSpan.textContent = Math.round(100 * volumeEnhance) + "%";
 
             const bESlider = document.getElementById("boostEnhancementSlider");
-            const bISpan = document.getElementById("boostIndicator");
+            const bISpan   = document.getElementById("boostIndicator");
             if (bESlider) bESlider.value = 50 * (boostLevel - 1);
-            if (bISpan) bISpan.textContent = "x" + boostLevel.toFixed(1);
+            if (bISpan)   bISpan.textContent = "x" + boostLevel.toFixed(1);
 
             const rSlider = document.getElementById("reverb");
-            const rSpan = document.getElementById("reverbValue");
+            const rSpan   = document.getElementById("reverbValue");
             if (rSlider) rSlider.value = 100 * reverbSliderValue;
-            if (rSpan) rSpan.textContent = Math.round(100 * reverbSliderValue) + "%";
+            if (rSpan)   rSpan.textContent = Math.round(100 * reverbSliderValue) + "%";
             if (wetGain) wetGain.gain.value = 1.2 * reverbSliderValue;
 
             if (Array.isArray(s.eqValues) && s.eqValues.length === GRAPHIC_EQ_BANDS) {
@@ -2007,22 +2202,31 @@
                 syncBassSliderFromEq();
             }
 
-            // === Stereo Widener state ===
+            // Stereo Widener state
             if (typeof s.widenerEnabled === "boolean") widenerEnabled = s.widenerEnabled;
-            if (typeof s.widenerValue === "number")   widenerValue   = s.widenerValue;
+            if (typeof s.widenerValue   === "number")  widenerValue   = s.widenerValue;
 
-            if (widenerSlider) {
-                widenerSlider.value = Math.round(widenerValue * 100);
-            }
-            if (widenerValueDisplay) {
-                widenerValueDisplay.textContent = Math.round(widenerValue * 100) + "%";
-            }
-            if (stereoWidenerChip) {
-                stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
-            }
-            if (stereoWidenerControls) {
-                stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
-            }
+            if (widenerSlider)         widenerSlider.value = Math.round(widenerValue * 100);
+            if (widenerValueDisplay)   widenerValueDisplay.textContent = Math.round(widenerValue * 100) + "%";
+            if (stereoWidenerChip)     stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
+            if (stereoWidenerControls) stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
+
+            // Channel Balance state
+            if (typeof s.balanceEnabled   === "boolean") balanceEnabled   = s.balanceEnabled;
+            if (typeof s.balanceValue     === "number")  balanceValue     = s.balanceValue;
+            if (typeof s.balanceLeftTrim  === "number")  balanceLeftTrim  = s.balanceLeftTrim;
+            if (typeof s.balanceRightTrim === "number")  balanceRightTrim = s.balanceRightTrim;
+            if (typeof s.balanceSwapped   === "boolean") balanceSwapped   = s.balanceSwapped;
+
+            if (balanceSliderEl)     balanceSliderEl.value = balanceValue;
+            if (balanceValueDisplay) balanceValueDisplay.textContent = (balanceValue > 0 ? "+" : "") + balanceValue;
+            if (leftGainSlider)      leftGainSlider.value  = Math.round(balanceLeftTrim  * 100);
+            if (leftGainDisplay)     leftGainDisplay.textContent  = Math.round(balanceLeftTrim  * 100) + "%";
+            if (rightGainSlider)     rightGainSlider.value = Math.round(balanceRightTrim * 100);
+            if (rightGainDisplay)    rightGainDisplay.textContent = Math.round(balanceRightTrim * 100) + "%";
+            if (balanceChip)         balanceChip.classList.toggle("active-chip", balanceEnabled);
+            if (balanceControlsEl)   balanceControlsEl.style.display = balanceEnabled ? "block" : "none";
+            updateBalanceStatus();
 
             applyBoostSettings();
         } catch (e) {
@@ -2031,7 +2235,7 @@
     }
 
     /* ============================================================
-       (19) شرائط التحكم
+       (22) شرائط التحكم
        ============================================================ */
     document.getElementById("reverb").oninput = e => {
         reverbSliderValue = parseFloat(e.target.value) / 100;
@@ -2071,15 +2275,15 @@
     };
 
     /* ============================================================
-       (20) اختصارات لوحة المفاتيح
+       (23) اختصارات لوحة المفاتيح
        ============================================================ */
     document.addEventListener("keydown", e => {
         const tag = (e.target.tagName || "").toUpperCase();
         if (tag === "INPUT" || tag === "TEXTAREA") return;
         switch (e.key) {
-            case " ": e.preventDefault(); playPauseBtn.click(); break;
-            case "ArrowRight": nextBtn.click(); break;
-            case "ArrowLeft": prevBtn.click(); break;
+            case " ":           e.preventDefault(); playPauseBtn.click(); break;
+            case "ArrowRight":  nextBtn.click(); break;
+            case "ArrowLeft":   prevBtn.click(); break;
             case "ArrowUp":
                 audio.volume = Math.min(1, audio.volume + 0.05);
                 volumeProgress.style.width = (100 * audio.volume) + "%";
@@ -2099,13 +2303,13 @@
             case "p": case "P": powerSaveChip.click(); break;
             case "t": case "T": palaceToggleChip.click(); break;
             case "h": case "H": advancedToggleChip.click(); break;
-            // === Stereo Widener shortcut ===
             case "w": case "W": if (stereoWidenerChip) stereoWidenerChip.click(); break;
+            case "l": case "L": if (balanceChip)       balanceChip.click();       break;
         }
     });
 
     /* ============================================================
-       (21) السحب والإفلات على الصفحة
+       (24) السحب والإفلات على الصفحة
        ============================================================ */
     let dragCounter = 0;
 
@@ -2116,7 +2320,7 @@
         dropOverlay.classList.add("show");
     });
 
-    document.addEventListener("dragleave", e => {
+    document.addEventListener("dragleave", () => {
         dragCounter = Math.max(0, dragCounter - 1);
         if (dragCounter === 0) {
             document.body.classList.remove("drag-over");
@@ -2146,7 +2350,7 @@
 
         for (const file of files) {
             const ext = file.name.split(".").pop().toLowerCase();
-            if (audioExts.includes(ext)) audioFiles.push(file);
+            if (audioExts.includes(ext))                  audioFiles.push(file);
             else if (lyricsExts.includes(ext) && !lyricsFile) lyricsFile = file;
         }
         if (audioFiles.length) addSongs(audioFiles);
@@ -2158,7 +2362,7 @@
     });
 
     /* ============================================================
-       (22) النجوم
+       (25) النجوم
        ============================================================ */
     function createStars() {
         const container = document.getElementById("starsBackground");
@@ -2171,7 +2375,7 @@
             star.style.width = size;
             star.style.height = size;
             star.style.left = Math.random() * 100 + "%";
-            star.style.top = Math.random() * 100 + "%";
+            star.style.top  = Math.random() * 100 + "%";
             star.style.animationDelay = (Math.random() * 4) + "s";
             frag.appendChild(star);
         }
@@ -2179,7 +2383,7 @@
     }
 
     /* ============================================================
-       (23) التهيئة النهائية
+       (26) التهيئة النهائية
        ============================================================ */
     function init() {
         switchUIMode();
@@ -2199,13 +2403,22 @@
         createStars();
         initMediaSessionHandlers();
 
-        // === Stereo Widener initial UI sync ===
+        // Sync للـ Widener
         if (stereoWidenerChip) {
             stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
         }
         if (stereoWidenerControls) {
             stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
         }
+
+        // Sync للـ Balance
+        if (balanceChip) {
+            balanceChip.classList.toggle("active-chip", balanceEnabled);
+        }
+        if (balanceControlsEl) {
+            balanceControlsEl.style.display = balanceEnabled ? "block" : "none";
+        }
+        updateBalanceStatus();
     }
 
     if (document.readyState === "loading") {
