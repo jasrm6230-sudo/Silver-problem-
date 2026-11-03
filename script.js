@@ -1466,7 +1466,7 @@
             curve[i] = Math.tanh(x * 5);
         }
         shaper.curve = curve;
-        shaper.oversample = "4x";
+        shaper.oversample = "none";
 
         const hp1 = audioContext.createBiquadFilter();
         hp1.type = "highpass"; hp1.frequency.value = 110;
@@ -1553,7 +1553,9 @@
     async function initAudioContext() {
         if (isAudioInitialized) return;
         try {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+    latencyHint: "playback"
+});
             if (audioContext.state === "suspended") await audioContext.resume();
 
             source   = audioContext.createMediaElementSource(audio);
