@@ -1,16 +1,10 @@
 /* ============================================================
-   المشغل الفضي الفاخر — script.js (النسخة النهائية v3.0)
-   Media Session + إيماءات + قائمة + Stereo Widener
-   + Channel Balance + Graphic EQ
-   + Master Limiter + Loudness Normalization
-   + Psychoacoustic Bass + Crossfeed
+   المشغل الفضي الفاخر — script.js (النسخة النهائية v3.1)
+   + Crossover Slider للـ Psycho-Bass
    ============================================================ */
 (function () {
     "use strict";
 
-    /* ============================================================
-       (1) الثوابت العامة
-       ============================================================ */
     const GRAPHIC_EQ_BANDS = 18;
     const EQ_MIN_DB = -12;
     const EQ_MAX_DB = 12;
@@ -29,14 +23,10 @@
 
     const DEFAULT_COVER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%232A2A38'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-family='Arial' font-size='20' fill='%23E8E8F2'%3Eغلاف%3C/text%3E%3C/svg%3E";
 
-    // Normalization target ≈ -18 dBFS RMS (يعادل ~ -14 LUFS)
     const NORM_TARGET_RMS = 0.125;
-    const NORM_MIN_GAIN = 0.25;   // -12 dB
-    const NORM_MAX_GAIN = 4.0;    // +12 dB
+    const NORM_MIN_GAIN = 0.25;
+    const NORM_MAX_GAIN = 4.0;
 
-    /* ============================================================
-       (2) دوال مساعدة
-       ============================================================ */
     function parseTime(str) {
         if (typeof str !== "string") return NaN;
         const t = str.trim().replace(",", ".").split(":");
@@ -149,9 +139,6 @@
         _saveTimer = setTimeout(saveSettings, 300);
     }
 
-    /* ============================================================
-       (3) الحالة العامة
-       ============================================================ */
     const audio = new Audio();
     let songs = [];
     let currentIndex = 0;
@@ -216,20 +203,22 @@
     let normGainNode = null;
     let normEnabled = true;
     let normGainValue = 1.0;
-    const songNormCache = new Map();   // src → gain
+    const songNormCache = new Map();
 
     // === Psychoacoustic Bass ===
     let psychoBassInput = null;
     let psychoBassOutput = null;
     let psychoBassHarmGain = null;
-    let psychoBassAmount = 0;          // 0..1
+    let psychoBassLowpass = null;         // ← NEW
+    let psychoBassCrossover = 120;        // ← NEW (Hz) — افتراضي 120
+    let psychoBassAmount = 0;
 
     // === Crossfeed ===
     let crossfeedInput = null;
     let crossfeedOutput = null;
     let crossfeedGainL = null;
     let crossfeedGainR = null;
-    let crossfeedAmount = 0;           // 0..1
+    let crossfeedAmount = 0;
 
     const songLyricsMap = new Map();
     let allObjectURLs = [];
@@ -244,7 +233,6 @@
     let _lastWordIdx = -1;
     let _lastCueIdx = -1;
 
-    // Graphic EQ
     let eqValues = new Array(GRAPHIC_EQ_BANDS).fill(0);
     let eqCanvas = null;
     let eqCtx = null;
@@ -259,9 +247,6 @@
         electronic: [ 5, 5, 3, 1, 0,-1, 0, 1, 2, 3, 3, 2, 1, 1, 0, 0, 0, 0]
     };
 
-    /* ============================================================
-       (4) عناصر DOM
-       ============================================================ */
     const playPauseBtn        = document.getElementById("playPauseBtn");
     const prevBtn             = document.getElementById("prevBtn");
     const nextBtn             = document.getElementById("nextBtn");
@@ -309,9 +294,6 @@
     let waveformData = null;
     let advancedPanelVisible = true;
 
-    /* ============================================================
-       (5) Media Session
-       ============================================================ */
     function initMediaSessionHandlers() {
         if (!("mediaSession" in navigator)) return;
         const safeSet = (action, handler) => {
@@ -342,9 +324,6 @@
         } catch (_) {}
     }
 
-    /* ============================================================
-       (6) الموجة الصوتية
-       ============================================================ */
     function resizeWaveformCanvas() {
         const rect = waveformContainer.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
@@ -376,15 +355,11 @@
             }
             peaks.push(max);
         }
-        // Fix: Math.max(...) ممكن يعمل stack overflow على ملفات ضخمة
         let globalMax = 0.001;
         for (const p of peaks) if (p > globalMax) globalMax = p;
         return peaks.map(p => p / globalMax);
     }
 
-    /* ============================================================
-       (7) Loudness Normalization — حساب RMS
-       ============================================================ */
     function computeNormGain(audioBuffer) {
         try {
             const data = audioBuffer.getChannelData(0);
@@ -392,9 +367,8 @@
             const winSize = Math.max(1, Math.floor(sampleRate * 0.4));
             let sumSq = 0, count = 0;
 
-            // خطوة سريعة: عينة نوافذ موزعة (بدل كل النوافذ) لتحسين الأداء
             const totalWins = Math.floor(data.length / winSize);
-            const stride = Math.max(1, Math.floor(totalWins / 200));  // ~200 نافذة كحد أقصى
+            const stride = Math.max(1, Math.floor(totalWins / 200));
 
             for (let w = 0; w < totalWins; w += stride) {
                 const start = w * winSize;
@@ -404,7 +378,7 @@
                     s += v * v;
                 }
                 const rms = Math.sqrt(s / winSize);
-                if (rms > 0.0005) {           // تجاهل الصمت
+                if (rms > 0.0005) {
                     sumSq += rms * rms;
                     count++;
                 }
@@ -427,7 +401,6 @@
             waveformData = extractWaveformData(audioBuffer);
             drawWaveform(0, audio.duration || 1);
 
-            // حساب Loudness Normalization
             const gain = computeNormGain(audioBuffer);
             songNormCache.set(url, gain);
             if (normEnabled && normGainNode && audioContext) {
@@ -469,7 +442,6 @@
             normGainNode.gain.setTargetAtTime(gain, audioContext.currentTime, 0.1);
             updateNormDisplay(gain);
         } else {
-            // لو لسه ما حسبناش — نستخدم القيمة الافتراضية
             normGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.1);
             updateNormDisplay(1);
         }
@@ -526,9 +498,6 @@
         }
     }
 
-    /* ============================================================
-       (8) الاستئناف التلقائي
-       ============================================================ */
     function startAutoResume() {
         if (!autoResumeEnabled || !isPlaying || songs.length === 0) return;
         stopAutoResume();
@@ -567,9 +536,6 @@
         resumeAttempts = 0;
     }
 
-    /* ============================================================
-       (9) السحب على الموجة
-       ============================================================ */
     function handleWaveformSeek(clientX) {
         if (audio.duration && waveformData) {
             const rect = waveformContainer.getBoundingClientRect();
@@ -618,9 +584,6 @@
         handleWaveformSeek(e.touches[0].clientX);
     }, { passive: true });
 
-    /* ============================================================
-       (10) إيماءات اللمس
-       ============================================================ */
     let touchStartX = 0, touchStartY = 0, touchHandled = false;
 
     musicPlayerContainer.addEventListener("touchstart", e => {
@@ -646,9 +609,6 @@
 
     musicPlayerContainer.addEventListener("touchend", () => { touchHandled = false; });
 
-    /* ============================================================
-       (11) نظام الكلمات
-       ============================================================ */
     function resetLyricsCache() {
         _lastWordIdx = -1;
         _lastCueIdx  = -1;
@@ -870,9 +830,6 @@
         switchUIMode();
     }
 
-    /* ============================================================
-       (12) قائمة التشغيل
-       ============================================================ */
     function getAudioDuration(file) {
         return new Promise(resolve => {
             const tempAudio = new Audio();
@@ -1178,7 +1135,6 @@
         albumImage.src = songs[index].cover || DEFAULT_COVER;
         waveformData = null;
 
-        // طبّق الـ normalization من الكاش فوراً (لو موجود)
         applyNormToCurrent();
 
         if (songs[index].src) loadAudioBuffer(songs[index].src);
@@ -1233,9 +1189,6 @@
         updatePlaylistActive();
     }
 
-    /* ============================================================
-       (13) نظام الصوت والمعادل
-       ============================================================ */
     function applyBoostSettings() {
         if (!gainNode) return;
         gainNode.gain.value = volumeEnhance * boostLevel;
@@ -1267,9 +1220,6 @@
         return buffer;
     }
 
-    /* ============================================================
-       === Stereo Widener — Mid/Side Matrix ===
-       ============================================================ */
     function initStereoWidener() {
         widenerInput  = audioContext.createGain();
         widenerOutput = audioContext.createGain();
@@ -1340,9 +1290,6 @@
         }
     }
 
-    /* ============================================================
-       === Channel Balance — 4-Gain Cross Routing ===
-       ============================================================ */
     function initChannelBalance() {
         balanceSplitter = audioContext.createChannelSplitter(2);
         balanceMerger   = audioContext.createChannelMerger(2);
@@ -1424,7 +1371,6 @@
         if (side === "left") env.connect(mrg, 0, 0);
         else                 env.connect(mrg, 0, 1);
 
-        // Test يمر عبر الـ balance routing كي يختبره فعلاً
         mrg.connect(balanceSplitter);
         osc.connect(env);
         osc.start(now);
@@ -1432,9 +1378,6 @@
         osc.onended = () => { try { env.disconnect(); mrg.disconnect(); } catch (_) {} };
     }
 
-    /* ============================================================
-       === Master Limiter ===
-       ============================================================ */
     function initMasterLimiter() {
         const limiter = audioContext.createDynamicsCompressor();
         limiter.threshold.value = -1;
@@ -1445,19 +1388,18 @@
         return limiter;
     }
 
-    /* ============================================================
-       === Psychoacoustic Bass ===
-       ============================================================ */
+    // === Psychoacoustic Bass (مع Crossover قابل للتغيير) ===
     function initPsychoBass() {
         psychoBassInput  = audioContext.createGain();
         psychoBassOutput = audioContext.createGain();
         psychoBassHarmGain = audioContext.createGain();
         psychoBassHarmGain.gain.value = 0;
 
-        const lowpass = audioContext.createBiquadFilter();
-        lowpass.type = "lowpass";
-        lowpass.frequency.value = 90;
-        lowpass.Q.value = 0.7;
+        // Low-pass بـ crossover متغير
+        psychoBassLowpass = audioContext.createBiquadFilter();
+        psychoBassLowpass.type = "lowpass";
+        psychoBassLowpass.frequency.value = psychoBassCrossover;
+        psychoBassLowpass.Q.value = 0.9;
 
         const shaper = audioContext.createWaveShaper();
         const curve = new Float32Array(1024);
@@ -1473,30 +1415,45 @@
         const hp2 = audioContext.createBiquadFilter();
         hp2.type = "highpass"; hp2.frequency.value = 180;
 
-        // المسار الجاف: الصوت يمر كما هو
         psychoBassInput.connect(psychoBassOutput);
-        // مسار التوافقيات
-        psychoBassInput.connect(lowpass);
-        lowpass.connect(shaper);
+        psychoBassInput.connect(psychoBassLowpass);
+        psychoBassLowpass.connect(shaper);
         shaper.connect(hp1);
         shaper.connect(hp2);
         hp1.connect(psychoBassHarmGain);
         hp2.connect(psychoBassHarmGain);
-        psychoBassHarmGain.connect(psychoBassOutput);
+        // ملاحظة: نترك psychoBassHarmGain غير متصل — setPsychoBassAmount هيوصّله
     }
 
     function setPsychoBassAmount(v) {
         psychoBassAmount = Math.max(0, Math.min(1, v));
         if (psychoBassHarmGain && audioContext) {
-            // 0 → 0، 100% → 0.9 (نتفادى ما يزيد عن الأصلي بكثير)
-            psychoBassHarmGain.gain.setTargetAtTime(0.9 * psychoBassAmount, audioContext.currentTime, 0.05);
+            try { psychoBassHarmGain.disconnect(); } catch (_) {}
+            if (psychoBassAmount > 0) {
+                psychoBassHarmGain.gain.setTargetAtTime(
+                    0.9 * psychoBassAmount,
+                    audioContext.currentTime,
+                    0.05
+                );
+                psychoBassHarmGain.connect(psychoBassOutput);
+            }
         }
         scheduleSave();
     }
 
-    /* ============================================================
-       === Crossfeed (Bauer-style) ===
-       ============================================================ */
+    // ←←← الدالة الجديدة للـ Crossover
+    function setPsychoBassCrossover(hz) {
+        psychoBassCrossover = Math.max(60, Math.min(200, hz));
+        if (psychoBassLowpass && audioContext) {
+            psychoBassLowpass.frequency.setTargetAtTime(
+                psychoBassCrossover,
+                audioContext.currentTime,
+                0.05
+            );
+        }
+        scheduleSave();
+    }
+
     function initCrossfeed() {
         crossfeedInput  = audioContext.createGain();
         crossfeedOutput = audioContext.createGain();
@@ -1506,11 +1463,9 @@
 
         crossfeedInput.connect(splitter);
 
-        // مسار مباشر
         splitter.connect(merger, 0, 0);
         splitter.connect(merger, 1, 1);
 
-        // مسار متقاطع L→R
         const delayL = audioContext.createDelay(0.01);
         delayL.delayTime.value = 0.0003;
         const lpL = audioContext.createBiquadFilter();
@@ -1522,7 +1477,6 @@
         lpL.connect(crossfeedGainL);
         crossfeedGainL.connect(merger, 0, 1);
 
-        // مسار متقاطع R→L
         const delayR = audioContext.createDelay(0.01);
         delayR.delayTime.value = 0.0003;
         const lpR = audioContext.createBiquadFilter();
@@ -1547,15 +1501,12 @@
         scheduleSave();
     }
 
-    /* ============================================================
-       (14) تهيئة AudioContext — السلسلة الكاملة
-       ============================================================ */
     async function initAudioContext() {
         if (isAudioInitialized) return;
         try {
             audioContext = new (window.AudioContext || window.webkitAudioContext)({
-    latencyHint: "playback"
-});
+                latencyHint: "playback"
+            });
             if (audioContext.state === "suspended") await audioContext.resume();
 
             source   = audioContext.createMediaElementSource(audio);
@@ -1575,18 +1526,13 @@
                 return filter;
             });
 
-            // ========== بناء السلسلة ==========
-            // source → gain → 18×EQ → psychoBass → reverb mix → widener → crossfeed → balance → norm → limiter → analyser → destination
-
             source.connect(gainNode);
             let currentNode = gainNode;
             filters.forEach(f => { currentNode.connect(f); currentNode = f; });
 
-            // Psychoacoustic Bass
             initPsychoBass();
             currentNode.connect(psychoBassInput);
 
-            // Reverb (dry + wet)
             convolverNode = audioContext.createConvolver();
             convolverNode.buffer = createReverbBuffer(audioContext, 2.8, 3.5);
             wetGain = audioContext.createGain();
@@ -1601,24 +1547,19 @@
             convolverNode.connect(wetGain);
             wetGain.connect(mixGain);
 
-            // Stereo Widener
             initStereoWidener();
             mixGain.connect(widenerInput);
 
-            // Crossfeed
             initCrossfeed();
             widenerOutput.connect(crossfeedInput);
 
-            // Channel Balance
             initChannelBalance();
             crossfeedOutput.connect(balanceSplitter);
 
-            // Loudness Normalization
             normGainNode = audioContext.createGain();
             normGainNode.gain.value = 1;
             balanceOutput.connect(normGainNode);
 
-            // Master Limiter
             masterLimiter = initMasterLimiter();
             normGainNode.connect(masterLimiter);
             masterLimiter.connect(analyser);
@@ -1694,9 +1635,6 @@
         if (visualizerAnimId) { cancelAnimationFrame(visualizerAnimId); visualizerAnimId = null; }
     }
 
-    /* ============================================================
-       (15) أزرار التحكم الأساسية
-       ============================================================ */
     playPauseBtn.onclick = async () => {
         if (!songs.length) { alert("أضف أغاني أولاً"); return; }
         if (!isAudioInitialized) await initAudioContext();
@@ -1772,9 +1710,6 @@
     nextBtn.onclick = () => { playNext(); };
     prevBtn.onclick = () => { playPrev(); };
 
-    /* ============================================================
-       (16) الشريط العلوي — Chips
-       ============================================================ */
     const boostChip = document.getElementById("boostChip");
     boostChip.onclick = () => {
         boostActive = !boostActive;
@@ -1833,9 +1768,6 @@
         palaceToggleChip.classList.toggle("palace-active", palaceEnabled);
     };
 
-    /* ============================================================
-       (17) Stereo Widener Handlers
-       ============================================================ */
     const stereoWidenerChip     = document.getElementById("stereoWidenerChip");
     const stereoWidenerControls = document.getElementById("stereoWidenerControls");
     const widenerSlider         = document.getElementById("widenerWidth");
@@ -1887,9 +1819,6 @@
         advancedToggleChip.classList.toggle("active-chip", advancedPanelVisible);
     };
 
-    /* ============================================================
-       (18) Channel Balance Handlers
-       ============================================================ */
     const balanceChip         = document.getElementById("balanceChip");
     const balanceControlsEl   = document.getElementById("balanceControls");
     const balanceSliderEl     = document.getElementById("balanceSlider");
@@ -1980,9 +1909,6 @@
     if (testLeftBtn)  testLeftBtn.onclick  = () => playBalanceTestTone("left");
     if (testRightBtn) testRightBtn.onclick = () => playBalanceTestTone("right");
 
-    /* ============================================================
-       (19) المودالات والقائمة الجانبية
-       ============================================================ */
     const infoChip = document.getElementById("infoChip");
     const infoModal = document.getElementById("infoModal");
     const closeInfoModalBtn = document.getElementById("closeInfoModal");
@@ -2062,9 +1988,6 @@
         reader.readAsDataURL(e.target.files[0]);
     });
 
-    /* ============================================================
-       (20) تأثيرات القصر
-       ============================================================ */
     document.getElementById("applyPalaceEffect").addEventListener("click", () => {
         const size = parseFloat(document.getElementById("palaceSize").value) / 100;
         if (wetGain && dryGain) {
@@ -2087,9 +2010,6 @@
         document.getElementById("palaceSizeValue").textContent = e.target.value + "%";
     });
 
-    /* ============================================================
-       (21) المعادل الرسومي
-       ============================================================ */
     function initGraphicEQ() {
         eqCanvas = document.getElementById("graphicEqCanvas");
         if (!eqCanvas) return;
@@ -2349,11 +2269,10 @@
         if (eqTooltip) eqTooltip.style.display = "none";
     }
 
-    /* ============================================================
-       (22) UI الجديد — Psycho-Bass + Crossfeed + Norm Toggle
-       ============================================================ */
     let psychoBassSlider = null;
     let psychoBassValueDisplay = null;
+    let crossoverSlider = null;
+    let crossoverValueDisplay = null;
     let crossfeedSlider = null;
     let crossfeedValueDisplay = null;
     let normToggle = null;
@@ -2362,7 +2281,7 @@
         const panel = document.querySelector(".audio-enhancement-controls");
         if (!panel || document.getElementById("normToggle")) return;
 
-        // ---- Loudness Normalization Toggle ----
+        // ---- Loudness Normalization ----
         const normDiv = document.createElement("div");
         normDiv.style.cssText = "margin-top:14px;padding-top:12px;border-top:1px solid rgba(232,232,242,0.15);";
         normDiv.innerHTML = `
@@ -2378,12 +2297,20 @@
         `;
         panel.appendChild(normDiv);
 
-        // ---- Psychoacoustic Bass ----
+        // ---- Psycho-Bass ----
         const bassDiv = document.createElement("div");
         bassDiv.style.cssText = "margin-top:14px;";
         bassDiv.innerHTML = `
             <div>🧠 جهير سايكو (Psycho-Bass) <span id="psychoBassValue">0%</span></div>
             <input type="range" class="enhancement-slider" id="psychoBassSlider" min="0" max="100" value="0">
+            <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:11px;color:#B0B0C8;">
+                <span>🎚️ Crossover</span>
+                <span id="crossoverValue">${psychoBassCrossover} Hz</span>
+            </div>
+            <input type="range" class="enhancement-slider" id="crossoverSlider" min="60" max="200" value="${psychoBassCrossover}" step="5">
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;margin-top:2px;">
+                <span>60 Hz (عميق)</span><span>200 Hz (متحكم)</span>
+            </div>
         `;
         panel.appendChild(bassDiv);
 
@@ -2396,28 +2323,33 @@
         `;
         panel.appendChild(cfDiv);
 
-        // Wire up elements
         psychoBassSlider = document.getElementById("psychoBassSlider");
         psychoBassValueDisplay = document.getElementById("psychoBassValue");
+        crossoverSlider = document.getElementById("crossoverSlider");
+        crossoverValueDisplay = document.getElementById("crossoverValue");
         crossfeedSlider = document.getElementById("crossfeedSlider");
         crossfeedValueDisplay = document.getElementById("crossfeedValue");
         normToggle = document.getElementById("normToggle");
 
-        // Psycho-Bass slider
         psychoBassSlider.addEventListener("input", e => {
             const v = parseInt(e.target.value, 10);
             psychoBassValueDisplay.textContent = v + "%";
             setPsychoBassAmount(v / 100);
         });
 
-        // Crossfeed slider
+        // ←←← Crossover slider
+        crossoverSlider.addEventListener("input", e => {
+            const hz = parseInt(e.target.value, 10);
+            crossoverValueDisplay.textContent = hz + " Hz";
+            setPsychoBassCrossover(hz);
+        });
+
         crossfeedSlider.addEventListener("input", e => {
             const v = parseInt(e.target.value, 10);
             crossfeedValueDisplay.textContent = v + "%";
             setCrossfeedAmount(v / 100);
         });
 
-        // Norm toggle
         normToggle.addEventListener("change", () => {
             normEnabled = normToggle.checked;
             updateNormToggleVisual();
@@ -2441,9 +2373,6 @@
         }
     }
 
-    /* ============================================================
-       (23) الإعدادات — حفظ واستعادة
-       ============================================================ */
     function saveSettings() {
         try {
             const settings = {
@@ -2461,6 +2390,7 @@
                 balanceSwapped,
                 normEnabled,
                 psychoBassAmount,
+                psychoBassCrossover,   // ← جديد
                 crossfeedAmount
             };
             localStorage.setItem("silverPlayerSettings_v3", JSON.stringify(settings));
@@ -2506,7 +2436,6 @@
                 syncBassSliderFromEq();
             }
 
-            // Widener
             if (typeof s.widenerEnabled === "boolean") widenerEnabled = s.widenerEnabled;
             if (typeof s.widenerValue   === "number")  widenerValue   = s.widenerValue;
             if (widenerSlider)         widenerSlider.value = Math.round(widenerValue * 100);
@@ -2514,7 +2443,6 @@
             if (stereoWidenerChip)     stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
             if (stereoWidenerControls) stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
 
-            // Balance
             if (typeof s.balanceEnabled   === "boolean") balanceEnabled   = s.balanceEnabled;
             if (typeof s.balanceValue     === "number")  balanceValue     = s.balanceValue;
             if (typeof s.balanceLeftTrim  === "number")  balanceLeftTrim  = s.balanceLeftTrim;
@@ -2530,9 +2458,9 @@
             if (balanceControlsEl)   balanceControlsEl.style.display = balanceEnabled ? "block" : "none";
             updateBalanceStatus();
 
-            // New audio features
             if (typeof s.normEnabled === "boolean") normEnabled = s.normEnabled;
             if (typeof s.psychoBassAmount === "number") psychoBassAmount = s.psychoBassAmount;
+            if (typeof s.psychoBassCrossover === "number") psychoBassCrossover = s.psychoBassCrossover; // ← جديد
             if (typeof s.crossfeedAmount  === "number") crossfeedAmount  = s.crossfeedAmount;
 
             if (normToggle) normToggle.checked = normEnabled;
@@ -2541,13 +2469,17 @@
                 psychoBassSlider.value = Math.round(psychoBassAmount * 100);
                 if (psychoBassValueDisplay) psychoBassValueDisplay.textContent = Math.round(psychoBassAmount * 100) + "%";
             }
+            if (crossoverSlider) {
+                crossoverSlider.value = psychoBassCrossover;
+                if (crossoverValueDisplay) crossoverValueDisplay.textContent = psychoBassCrossover + " Hz";
+            }
             if (crossfeedSlider) {
                 crossfeedSlider.value = Math.round(crossfeedAmount * 100);
                 if (crossfeedValueDisplay) crossfeedValueDisplay.textContent = Math.round(crossfeedAmount * 100) + "%";
             }
-            // Apply audio-level ones if audio initialized
             if (isAudioInitialized) {
                 setPsychoBassAmount(psychoBassAmount);
+                setPsychoBassCrossover(psychoBassCrossover);
                 setCrossfeedAmount(crossfeedAmount);
             }
 
@@ -2557,9 +2489,6 @@
         }
     }
 
-    /* ============================================================
-       (24) شرائط التحكم الأصلية
-       ============================================================ */
     document.getElementById("reverb").oninput = e => {
         reverbSliderValue = parseFloat(e.target.value) / 100;
         document.getElementById("reverbValue").textContent = e.target.value + "%";
@@ -2597,9 +2526,6 @@
         scheduleSave();
     };
 
-    /* ============================================================
-       (25) اختصارات لوحة المفاتيح
-       ============================================================ */
     document.addEventListener("keydown", e => {
         const tag = (e.target.tagName || "").toUpperCase();
         if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -2631,9 +2557,6 @@
         }
     });
 
-    /* ============================================================
-       (26) السحب والإفلات على الصفحة
-       ============================================================ */
     let dragCounter = 0;
     document.addEventListener("dragenter", e => {
         e.preventDefault();
@@ -2677,9 +2600,6 @@
         }
     });
 
-    /* ============================================================
-       (27) قبل الإغلاق — تنظيف ObjectURLs
-       ============================================================ */
     window.addEventListener("beforeunload", () => {
         try {
             allObjectURLs.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
@@ -2687,9 +2607,6 @@
         } catch (_) {}
     });
 
-    /* ============================================================
-       (28) النجوم
-       ============================================================ */
     function createStars() {
         const container = document.getElementById("starsBackground");
         if (!container) return;
@@ -2708,9 +2625,6 @@
         container.appendChild(frag);
     }
 
-    /* ============================================================
-       (29) التهيئة النهائية
-       ============================================================ */
     function init() {
         switchUIMode();
         enableSlow3D(false);
@@ -2725,12 +2639,11 @@
         refreshPlaylist();
         updatePlaylistCount();
         initGraphicEQ();
-        injectAudioEnhancementsUI();   // ← UI الجديد
+        injectAudioEnhancementsUI();
         loadSettings();
         createStars();
         initMediaSessionHandlers();
 
-        // Sync للـ Widener
         if (stereoWidenerChip) {
             stereoWidenerChip.classList.toggle("active-chip", widenerEnabled);
         }
@@ -2738,7 +2651,6 @@
             stereoWidenerControls.style.display = widenerEnabled ? "block" : "none";
         }
 
-        // Sync للـ Balance
         if (balanceChip) {
             balanceChip.classList.toggle("active-chip", balanceEnabled);
         }
