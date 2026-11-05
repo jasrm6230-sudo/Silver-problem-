@@ -1,6 +1,6 @@
 /* ============================================================
-   المشغل الفضي الفاخر — script.js (النسخة النهائية v3.1)
-   + Crossover Slider للـ Psycho-Bass
+   المشغل الفضي الفاخر — script.js (النسخة النهائية v3.2)
+   + Crossover Slider + Extreme Boost Mode + Bass Warning
    ============================================================ */
 (function () {
     "use strict";
@@ -26,6 +26,14 @@
     const NORM_TARGET_RMS = 0.125;
     const NORM_MIN_GAIN = 0.25;
     const NORM_MAX_GAIN = 4.0;
+
+    // إعدادات الـ Limiter للوضعين
+    const LIMITER_SAFE = {
+        threshold: -1, knee: 0, ratio: 20, attack: 0.001, release: 0.1
+    };
+    const LIMITER_EXTREME = {
+        threshold: -2, knee: 6, ratio: 6, attack: 0.003, release: 0.2
+    };
 
     function parseTime(str) {
         if (typeof str !== "string") return NaN;
@@ -198,6 +206,7 @@
 
     // === Master Limiter ===
     let masterLimiter = null;
+    let extremeBoostMode = false;   // ← جديد
 
     // === Loudness Normalization ===
     let normGainNode = null;
@@ -209,8 +218,8 @@
     let psychoBassInput = null;
     let psychoBassOutput = null;
     let psychoBassHarmGain = null;
-    let psychoBassLowpass = null;         // ← NEW
-    let psychoBassCrossover = 120;        // ← NEW (Hz) — افتراضي 120
+    let psychoBassLowpass = null;
+    let psychoBassCrossover = 120;
     let psychoBassAmount = 0;
 
     // === Crossfeed ===
@@ -1380,22 +1389,70 @@
 
     function initMasterLimiter() {
         const limiter = audioContext.createDynamicsCompressor();
-        limiter.threshold.value = -1;
-        limiter.knee.value = 0;
-        limiter.ratio.value = 20;
-        limiter.attack.value = 0.001;
-        limiter.release.value = 0.1;
+        limiter.threshold.value = LIMITER_SAFE.threshold;
+        limiter.knee.value = LIMITER_SAFE.knee;
+        limiter.ratio.value = LIMITER_SAFE.ratio;
+        limiter.attack.value = LIMITER_SAFE.attack;
+        limiter.release.value = LIMITER_SAFE.release;
         return limiter;
     }
 
-    // === Psychoacoustic Bass (مع Crossover قابل للتغيير) ===
+    // === تبديل وضع الـ Limiter (Safe ↔ Extreme) ===
+    function setLimiterMode(isExtreme) {
+        if (!masterLimiter || !audioContext) return;
+        extremeBoostMode = isExtreme;
+        const cfg = isExtreme ? LIMITER_EXTREME : LIMITER_SAFE;
+        const now = audioContext.currentTime;
+        try {
+            masterLimiter.threshold.setTargetAtTime(cfg.threshold, now, 0.05);
+            masterLimiter.knee.setTargetAtTime(cfg.knee, now, 0.05);
+            masterLimiter.ratio.setTargetAtTime(cfg.ratio, now, 0.05);
+            masterLimiter.attack.setTargetAtTime(cfg.attack, now, 0.05);
+            masterLimiter.release.setTargetAtTime(cfg.release, now, 0.05);
+        } catch (_) {
+            masterLimiter.threshold.value = cfg.threshold;
+            masterLimiter.knee.value = cfg.knee;
+            masterLimiter.ratio.value = cfg.ratio;
+            masterLimiter.attack.value = cfg.attack;
+            masterLimiter.release.value = cfg.release;
+        }
+        updateExtremeBoostButton();
+        scheduleSave();
+    }
+
+    function toggleExtremeBoost() {
+        if (!isAudioInitialized) {
+            showToast("⚠️ شغّل أغنية أولاً");
+            return;
+        }
+        setLimiterMode(!extremeBoostMode);
+        showToast(extremeBoostMode
+            ? "💥 Extreme Boost نشط — صوت أعلى وأقوى"
+            : "🔇 الوضع الآمن — حماية ضد التشويه");
+    }
+
+    function updateExtremeBoostButton() {
+        const btn = document.getElementById("extremeBoostBtn");
+        if (!btn) return;
+        if (extremeBoostMode) {
+            btn.textContent = "🔇 العودة للوضع الآمن";
+            btn.style.background = "linear-gradient(135deg, #2A2A38, #3A3A4A)";
+            btn.style.borderColor = "#E8E8F2";
+            btn.style.boxShadow = "0 4px 12px rgba(232,232,242,0.3)";
+        } else {
+            btn.textContent = "💥 Extreme Boost";
+            btn.style.background = "linear-gradient(135deg, #ff4444, #ff8800)";
+            btn.style.borderColor = "transparent";
+            btn.style.boxShadow = "0 4px 12px rgba(255,68,68,0.4)";
+        }
+    }
+
     function initPsychoBass() {
         psychoBassInput  = audioContext.createGain();
         psychoBassOutput = audioContext.createGain();
         psychoBassHarmGain = audioContext.createGain();
         psychoBassHarmGain.gain.value = 0;
 
-        // Low-pass بـ crossover متغير
         psychoBassLowpass = audioContext.createBiquadFilter();
         psychoBassLowpass.type = "lowpass";
         psychoBassLowpass.frequency.value = psychoBassCrossover;
@@ -1422,7 +1479,6 @@
         shaper.connect(hp2);
         hp1.connect(psychoBassHarmGain);
         hp2.connect(psychoBassHarmGain);
-        // ملاحظة: نترك psychoBassHarmGain غير متصل — setPsychoBassAmount هيوصّله
     }
 
     function setPsychoBassAmount(v) {
@@ -1441,7 +1497,6 @@
         scheduleSave();
     }
 
-    // ←←← الدالة الجديدة للـ Crossover
     function setPsychoBassCrossover(hz) {
         psychoBassCrossover = Math.max(60, Math.min(200, hz));
         if (psychoBassLowpass && audioContext) {
@@ -2091,6 +2146,22 @@
         const bassPercent = Math.round((Math.max(0, eqValues[0]) / (EQ_MAX_DB * 2)) * 100);
         bassSlider.value = bassPercent;
         bassValueSpan.textContent = bassPercent + "%";
+        updateBassWarning(bassPercent);
+    }
+
+    // === تحذير بصري لما الـ bass يعدي 80% ===
+    function updateBassWarning(percent) {
+        const span = document.getElementById("bassValue");
+        if (!span) return;
+        if (percent >= 80) {
+            span.style.color = "#ff6666";
+            span.style.fontWeight = "bold";
+            span.title = "⚠️ تشويه محتمل — حافظ على مستوى الصوت متوسط";
+        } else {
+            span.style.color = "";
+            span.style.fontWeight = "";
+            span.title = "";
+        }
     }
 
     function updateEqPoints() {
@@ -2297,7 +2368,7 @@
         `;
         panel.appendChild(normDiv);
 
-        // ---- Psycho-Bass ----
+        // ---- Psycho-Bass + Crossover ----
         const bassDiv = document.createElement("div");
         bassDiv.style.cssText = "margin-top:14px;";
         bassDiv.innerHTML = `
@@ -2311,6 +2382,10 @@
             <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;margin-top:2px;">
                 <span>60 Hz (عميق)</span><span>200 Hz (متحكم)</span>
             </div>
+            <div style="font-size:10px;color:#888;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border-radius:8px;">
+                💡 <b>للباس المميز</b>: Psycho-Bass=0% + Bass slider عالي<br>
+                🎧 <b>للباس النظيف</b>: Psycho-Bass=50%+ + Bass slider متوسط
+            </div>
         `;
         panel.appendChild(bassDiv);
 
@@ -2322,6 +2397,26 @@
             <input type="range" class="enhancement-slider" id="crossfeedSlider" min="0" max="100" value="0">
         `;
         panel.appendChild(cfDiv);
+
+        // ---- Extreme Boost ----
+        const extremeDiv = document.createElement("div");
+        extremeDiv.style.cssText = "margin-top:14px;padding-top:12px;border-top:1px solid rgba(232,232,242,0.15);";
+        extremeDiv.innerHTML = `
+            <button id="extremeBoostBtn" style="
+                width:100%;padding:11px;border-radius:20px;cursor:pointer;
+                background:linear-gradient(135deg, #ff4444, #ff8800);
+                color:#fff;font-weight:bold;font-size:13px;
+                border:1px solid transparent;
+                box-shadow:0 4px 12px rgba(255,68,68,0.4);
+                transition:all 0.3s;
+                font-family:inherit;
+            ">💥 Extreme Boost</button>
+            <div style="font-size:10px;color:#B0B0C8;margin-top:6px;text-align:center;line-height:1.4;">
+                وضع التضخيم الأقصى — أقل حماية، صوت أعلى<br>
+                <span style="color:#ff9999;">⚠️ متاح فقط بعد تشغيل الأغنية</span>
+            </div>
+        `;
+        panel.appendChild(extremeDiv);
 
         psychoBassSlider = document.getElementById("psychoBassSlider");
         psychoBassValueDisplay = document.getElementById("psychoBassValue");
@@ -2337,7 +2432,6 @@
             setPsychoBassAmount(v / 100);
         });
 
-        // ←←← Crossover slider
         crossoverSlider.addEventListener("input", e => {
             const hz = parseInt(e.target.value, 10);
             crossoverValueDisplay.textContent = hz + " Hz";
@@ -2356,6 +2450,9 @@
             applyNormToCurrent();
             scheduleSave();
         });
+
+        document.getElementById("extremeBoostBtn").addEventListener("click", toggleExtremeBoost);
+        updateExtremeBoostButton();
     }
 
     function updateNormToggleVisual() {
@@ -2390,8 +2487,9 @@
                 balanceSwapped,
                 normEnabled,
                 psychoBassAmount,
-                psychoBassCrossover,   // ← جديد
-                crossfeedAmount
+                psychoBassCrossover,
+                crossfeedAmount,
+                extremeBoostMode   // ← جديد
             };
             localStorage.setItem("silverPlayerSettings_v3", JSON.stringify(settings));
         } catch (_) {}
@@ -2460,8 +2558,9 @@
 
             if (typeof s.normEnabled === "boolean") normEnabled = s.normEnabled;
             if (typeof s.psychoBassAmount === "number") psychoBassAmount = s.psychoBassAmount;
-            if (typeof s.psychoBassCrossover === "number") psychoBassCrossover = s.psychoBassCrossover; // ← جديد
+            if (typeof s.psychoBassCrossover === "number") psychoBassCrossover = s.psychoBassCrossover;
             if (typeof s.crossfeedAmount  === "number") crossfeedAmount  = s.crossfeedAmount;
+            if (typeof s.extremeBoostMode === "boolean") extremeBoostMode = s.extremeBoostMode;
 
             if (normToggle) normToggle.checked = normEnabled;
             updateNormToggleVisual();
@@ -2481,6 +2580,7 @@
                 setPsychoBassAmount(psychoBassAmount);
                 setPsychoBassCrossover(psychoBassCrossover);
                 setCrossfeedAmount(crossfeedAmount);
+                if (masterLimiter) setLimiterMode(extremeBoostMode);
             }
 
             applyBoostSettings();
@@ -2521,6 +2621,7 @@
         eqValues[0] = db;
         if (filters && filters[0]) filters[0].gain.value = db;
         document.getElementById("bassValue").textContent = percent + "%";
+        updateBassWarning(percent);
         updateEqPoints();
         drawEqCanvas();
         scheduleSave();
@@ -2554,6 +2655,7 @@
             case "h": case "H": advancedToggleChip.click(); break;
             case "w": case "W": if (stereoWidenerChip) stereoWidenerChip.click(); break;
             case "l": case "L": if (balanceChip)       balanceChip.click();       break;
+            case "e": case "E": toggleExtremeBoost(); break;
         }
     });
 
@@ -2659,6 +2761,7 @@
         }
         updateBalanceStatus();
         updateNormToggleVisual();
+        updateExtremeBoostButton();
     }
 
     if (document.readyState === "loading") {
