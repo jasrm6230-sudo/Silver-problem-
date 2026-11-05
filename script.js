@@ -1,10 +1,15 @@
 /* ============================================================
-   المشغل الفضي الفاخر — script.js (النسخة النهائية v3.2)
-   + Crossover Slider + Extreme Boost Mode + Bass Warning
+   المشغل الفضي الفاخر — script.js (v3.3)
+   Media Session + إيماءات + قائمة + Stereo Widener
+   + Channel Balance + Graphic EQ + Master Limiter (3 modes)
+   + Loudness Normalization + Psychoacoustic Bass + Crossfeed
    ============================================================ */
 (function () {
     "use strict";
 
+    /* ============================================================
+       (1) الثوابت العامة
+       ============================================================ */
     const GRAPHIC_EQ_BANDS = 18;
     const EQ_MIN_DB = -12;
     const EQ_MAX_DB = 12;
@@ -27,14 +32,44 @@
     const NORM_MIN_GAIN = 0.25;
     const NORM_MAX_GAIN = 4.0;
 
-    // إعدادات الـ Limiter للوضعين
-    const LIMITER_SAFE = {
-        threshold: -1, knee: 0, ratio: 20, attack: 0.001, release: 0.1
-    };
-    const LIMITER_EXTREME = {
-        threshold: -2, knee: 6, ratio: 6, attack: 0.003, release: 0.2
+    /* ============================================================
+       (2) تعريف مستويات الـ Limiter الثلاثة
+       ============================================================ */
+    const LIMITER_MODES = {
+        safe: {
+            id: "safe",
+            nameAr: "آمن",
+            icon: "🛡️",
+            description: "حماية كاملة ضد التشويه — صوت نضيف ومتوازن",
+            color: "#8EE68E",
+            config: { threshold: -1, knee: 0, ratio: 20, attack: 0.001, release: 0.1 },
+            bypass: false
+        },
+        medium: {
+            id: "medium",
+            nameAr: "متوسط",
+            icon: "⚖️",
+            description: "توازن بين النقاء والقوة — حماية معتدلة",
+            color: "#E6D06A",
+            config: { threshold: 0, knee: 3, ratio: 8, attack: 0.003, release: 0.15 },
+            bypass: false
+        },
+        raw: {
+            id: "raw",
+            nameAr: "خام",
+            icon: "💥",
+            description: "أقصى تضخيم بدون حماية — إحساس كامل بالقوة",
+            color: "#FF6A6A",
+            config: null,
+            bypass: true
+        }
     };
 
+    const LIMITER_ORDER = ["safe", "medium", "raw"];
+
+    /* ============================================================
+       (3) دوال مساعدة
+       ============================================================ */
     function parseTime(str) {
         if (typeof str !== "string") return NaN;
         const t = str.trim().replace(",", ".").split(":");
@@ -147,6 +182,9 @@
         _saveTimer = setTimeout(saveSettings, 300);
     }
 
+    /* ============================================================
+       (4) الحالة العامة
+       ============================================================ */
     const audio = new Audio();
     let songs = [];
     let currentIndex = 0;
@@ -204,9 +242,9 @@
     let balanceEnabled = false;
     let balanceSwapped = false;
 
-    // === Master Limiter ===
+    // === Master Limiter (3 modes) ===
     let masterLimiter = null;
-    let extremeBoostMode = false;   // ← جديد
+    let currentLimiterMode = "safe";
 
     // === Loudness Normalization ===
     let normGainNode = null;
@@ -256,6 +294,9 @@
         electronic: [ 5, 5, 3, 1, 0,-1, 0, 1, 2, 3, 3, 2, 1, 1, 0, 0, 0, 0]
     };
 
+    /* ============================================================
+       (5) عناصر DOM
+       ============================================================ */
     const playPauseBtn        = document.getElementById("playPauseBtn");
     const prevBtn             = document.getElementById("prevBtn");
     const nextBtn             = document.getElementById("nextBtn");
@@ -303,6 +344,9 @@
     let waveformData = null;
     let advancedPanelVisible = true;
 
+    /* ============================================================
+       (6) Media Session
+       ============================================================ */
     function initMediaSessionHandlers() {
         if (!("mediaSession" in navigator)) return;
         const safeSet = (action, handler) => {
@@ -333,6 +377,9 @@
         } catch (_) {}
     }
 
+    /* ============================================================
+       (7) الموجة الصوتية
+       ============================================================ */
     function resizeWaveformCanvas() {
         const rect = waveformContainer.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
@@ -369,13 +416,15 @@
         return peaks.map(p => p / globalMax);
     }
 
+    /* ============================================================
+       (8) Loudness Normalization
+       ============================================================ */
     function computeNormGain(audioBuffer) {
         try {
             const data = audioBuffer.getChannelData(0);
             const sampleRate = audioBuffer.sampleRate;
             const winSize = Math.max(1, Math.floor(sampleRate * 0.4));
             let sumSq = 0, count = 0;
-
             const totalWins = Math.floor(data.length / winSize);
             const stride = Math.max(1, Math.floor(totalWins / 200));
 
@@ -392,7 +441,6 @@
                     count++;
                 }
             }
-
             const avgRms = count > 0 ? Math.sqrt(sumSq / count) : 0.001;
             const gain = NORM_TARGET_RMS / avgRms;
             return Math.max(NORM_MIN_GAIN, Math.min(NORM_MAX_GAIN, gain));
@@ -507,6 +555,9 @@
         }
     }
 
+    /* ============================================================
+       (9) الاستئناف التلقائي
+       ============================================================ */
     function startAutoResume() {
         if (!autoResumeEnabled || !isPlaying || songs.length === 0) return;
         stopAutoResume();
@@ -545,6 +596,9 @@
         resumeAttempts = 0;
     }
 
+    /* ============================================================
+       (10) السحب على الموجة
+       ============================================================ */
     function handleWaveformSeek(clientX) {
         if (audio.duration && waveformData) {
             const rect = waveformContainer.getBoundingClientRect();
@@ -593,6 +647,9 @@
         handleWaveformSeek(e.touches[0].clientX);
     }, { passive: true });
 
+    /* ============================================================
+       (11) إيماءات اللمس
+       ============================================================ */
     let touchStartX = 0, touchStartY = 0, touchHandled = false;
 
     musicPlayerContainer.addEventListener("touchstart", e => {
@@ -618,6 +675,9 @@
 
     musicPlayerContainer.addEventListener("touchend", () => { touchHandled = false; });
 
+    /* ============================================================
+       (12) نظام الكلمات
+       ============================================================ */
     function resetLyricsCache() {
         _lastWordIdx = -1;
         _lastCueIdx  = -1;
@@ -839,6 +899,9 @@
         switchUIMode();
     }
 
+    /* ============================================================
+       (13) قائمة التشغيل
+       ============================================================ */
     function getAudioDuration(file) {
         return new Promise(resolve => {
             const tempAudio = new Audio();
@@ -1198,6 +1261,9 @@
         updatePlaylistActive();
     }
 
+    /* ============================================================
+       (14) نظام الصوت والمعادل
+       ============================================================ */
     function applyBoostSettings() {
         if (!gainNode) return;
         gainNode.gain.value = volumeEnhance * boostLevel;
@@ -1229,6 +1295,9 @@
         return buffer;
     }
 
+    /* ============================================================
+       (15) Stereo Widener — Mid/Side Matrix
+       ============================================================ */
     function initStereoWidener() {
         widenerInput  = audioContext.createGain();
         widenerOutput = audioContext.createGain();
@@ -1299,6 +1368,9 @@
         }
     }
 
+    /* ============================================================
+       (16) Channel Balance — 4-Gain Cross Routing
+       ============================================================ */
     function initChannelBalance() {
         balanceSplitter = audioContext.createChannelSplitter(2);
         balanceMerger   = audioContext.createChannelMerger(2);
@@ -1387,66 +1459,140 @@
         osc.onended = () => { try { env.disconnect(); mrg.disconnect(); } catch (_) {} };
     }
 
+    /* ============================================================
+       (17) Master Limiter — 3 مستويات احترافية
+       ============================================================ */
+
+    /**
+     * ينشئ عقدة الـ Limiter (DynamicsCompressor) بالإعدادات الافتراضية (Safe).
+     */
     function initMasterLimiter() {
         const limiter = audioContext.createDynamicsCompressor();
-        limiter.threshold.value = LIMITER_SAFE.threshold;
-        limiter.knee.value = LIMITER_SAFE.knee;
-        limiter.ratio.value = LIMITER_SAFE.ratio;
-        limiter.attack.value = LIMITER_SAFE.attack;
-        limiter.release.value = LIMITER_SAFE.release;
+        const cfg = LIMITER_MODES.safe.config;
+        limiter.threshold.value = cfg.threshold;
+        limiter.knee.value      = cfg.knee;
+        limiter.ratio.value     = cfg.ratio;
+        limiter.attack.value    = cfg.attack;
+        limiter.release.value   = cfg.release;
         return limiter;
     }
 
-    // === تبديل وضع الـ Limiter (Safe ↔ Extreme) ===
-    function setLimiterMode(isExtreme) {
-        if (!masterLimiter || !audioContext) return;
-        extremeBoostMode = isExtreme;
-        const cfg = isExtreme ? LIMITER_EXTREME : LIMITER_SAFE;
-        const now = audioContext.currentTime;
-        try {
-            masterLimiter.threshold.setTargetAtTime(cfg.threshold, now, 0.05);
-            masterLimiter.knee.setTargetAtTime(cfg.knee, now, 0.05);
-            masterLimiter.ratio.setTargetAtTime(cfg.ratio, now, 0.05);
-            masterLimiter.attack.setTargetAtTime(cfg.attack, now, 0.05);
-            masterLimiter.release.setTargetAtTime(cfg.release, now, 0.05);
-        } catch (_) {
-            masterLimiter.threshold.value = cfg.threshold;
-            masterLimiter.knee.value = cfg.knee;
-            masterLimiter.ratio.value = cfg.ratio;
-            masterLimiter.attack.value = cfg.attack;
-            masterLimiter.release.value = cfg.release;
-        }
-        updateExtremeBoostButton();
-        scheduleSave();
-    }
+    /**
+     * يبدّل بين مستويات الـ Limiter الثلاثة.
+     * - safe / medium: يمر الصوت عبر الـ DynamicsCompressor بإعدادات مختلفة.
+     * - raw: يتخطى الـ Limiter تماماً (bypass).
+     *
+     * الطريقة الآمنة للتبديل:
+     * 1. نفصل normGainNode من كل شيء.
+     * 2. نفصل masterLimiter من الـ analyser (لمنع أي تسريب).
+     * 3. نعيد التوصيل حسب الوضع الجديد.
+     */
+    function setLimiterMode(mode) {
+        if (!LIMITER_MODES[mode]) mode = "safe";
 
-    function toggleExtremeBoost() {
-        if (!isAudioInitialized) {
-            showToast("⚠️ شغّل أغنية أولاً");
+        const modeInfo = LIMITER_MODES[mode];
+        const previousMode = currentLimiterMode;
+        currentLimiterMode = mode;
+
+        // لا يمكن تطبيق التغييرات على الـ audio graph قبل التهيئة
+        if (!audioContext || !masterLimiter || !normGainNode || !analyser) {
+            updateLimiterModeUI();
+            scheduleSave();
             return;
         }
-        setLimiterMode(!extremeBoostMode);
-        showToast(extremeBoostMode
-            ? "💥 Extreme Boost نشط — صوت أعلى وأقوى"
-            : "🔇 الوضع الآمن — حماية ضد التشويه");
-    }
 
-    function updateExtremeBoostButton() {
-        const btn = document.getElementById("extremeBoostBtn");
-        if (!btn) return;
-        if (extremeBoostMode) {
-            btn.textContent = "🔇 العودة للوضع الآمن";
-            btn.style.background = "linear-gradient(135deg, #2A2A38, #3A3A4A)";
-            btn.style.borderColor = "#E8E8F2";
-            btn.style.boxShadow = "0 4px 12px rgba(232,232,242,0.3)";
+        const now = audioContext.currentTime;
+
+        // 1. نفصل عقدة الـ normalization من كل مكان
+        try { normGainNode.disconnect(); } catch (_) {}
+
+        // 2. نفصل الـ limiter من الـ analyser
+        try { masterLimiter.disconnect(); } catch (_) {}
+
+        // 3. نعيد التوصيل حسب الوضع
+        if (modeInfo.bypass) {
+            // 🚀 وضع Raw: توصيل مباشر — يتخطى الـ limiter
+            normGainNode.connect(analyser);
         } else {
-            btn.textContent = "💥 Extreme Boost";
-            btn.style.background = "linear-gradient(135deg, #ff4444, #ff8800)";
-            btn.style.borderColor = "transparent";
-            btn.style.boxShadow = "0 4px 12px rgba(255,68,68,0.4)";
+            // 🛡️ وضع Safe/Medium: نطبق الإعدادات ونمر عبر الـ limiter
+            const cfg = modeInfo.config;
+            try {
+                masterLimiter.threshold.setTargetAtTime(cfg.threshold, now, 0.05);
+                masterLimiter.knee.setTargetAtTime(cfg.knee, now, 0.05);
+                masterLimiter.ratio.setTargetAtTime(cfg.ratio, now, 0.05);
+                masterLimiter.attack.setTargetAtTime(cfg.attack, now, 0.05);
+                masterLimiter.release.setTargetAtTime(cfg.release, now, 0.05);
+            } catch (_) {
+                // fallback لو setTargetAtTime مش مدعوم
+                masterLimiter.threshold.value = cfg.threshold;
+                masterLimiter.knee.value      = cfg.knee;
+                masterLimiter.ratio.value     = cfg.ratio;
+                masterLimiter.attack.value    = cfg.attack;
+                masterLimiter.release.value   = cfg.release;
+            }
+
+            normGainNode.connect(masterLimiter);
+            masterLimiter.connect(analyser);
+        }
+
+        updateLimiterModeUI();
+        scheduleSave();
+
+        // نعطي إشعار للمستخدم لو الوضع اتغير فعلاً
+        if (previousMode !== mode) {
+            showToast(`${modeInfo.icon} الوضع: ${modeInfo.nameAr} — ${modeInfo.description}`);
         }
     }
 
+    /**
+     * ينتقل للوضع التالي في الترتيب: Safe → Medium → Raw → Safe
+     */
+    function cycleLimiterMode() {
+        const idx = LIMITER_ORDER.indexOf(currentLimiterMode);
+        const nextMode = LIMITER_ORDER[(idx + 1) % LIMITER_ORDER.length];
+        setLimiterMode(nextMode);
+    }
+
+    /**
+     * يحدّث حالة أزرار الـ Limiter الثلاثة في الواجهة.
+     */
+    function updateLimiterModeUI() {
+        const buttons = document.querySelectorAll(".limiter-mode-btn");
+        if (!buttons.length) return;
+
+        buttons.forEach(btn => {
+            const mode = btn.dataset.mode;
+            const isActive = mode === currentLimiterMode;
+            const modeInfo = LIMITER_MODES[mode];
+
+            if (isActive) {
+                btn.style.background = "linear-gradient(145deg, #E8E8F2, #FFFFFF)";
+                btn.style.color = "#0A0A0D";
+                btn.style.borderColor = "#FFFFFF";
+                btn.style.boxShadow = "0 0 18px rgba(255,255,255,0.6), inset 0 1px 0 rgba(255,255,255,0.9)";
+                btn.style.transform = "translateY(-1px)";
+            } else {
+                btn.style.background = "linear-gradient(145deg, #1A1A24, #0A0A0D)";
+                btn.style.color = "#E8E8F2";
+                btn.style.borderColor = "rgba(232,232,242,0.3)";
+                btn.style.boxShadow = "0 3px 8px rgba(0,0,0,0.3)";
+                btn.style.transform = "translateY(0)";
+            }
+            btn.style.opacity = isActive ? "1" : "0.7";
+        });
+
+        // تحديث الوصف
+        const desc = document.getElementById("limiterModeDesc");
+        if (desc) {
+            const modeInfo = LIMITER_MODES[currentLimiterMode];
+            desc.textContent = modeInfo.icon + " " + modeInfo.description;
+            desc.style.color = modeInfo.color;
+        }
+    }
+
+    /* ============================================================
+       (18) Psychoacoustic Bass
+       ============================================================ */
     function initPsychoBass() {
         psychoBassInput  = audioContext.createGain();
         psychoBassOutput = audioContext.createGain();
@@ -1509,6 +1655,9 @@
         scheduleSave();
     }
 
+    /* ============================================================
+       (19) Crossfeed — Bauer-style
+       ============================================================ */
     function initCrossfeed() {
         crossfeedInput  = audioContext.createGain();
         crossfeedOutput = audioContext.createGain();
@@ -1556,6 +1705,9 @@
         scheduleSave();
     }
 
+    /* ============================================================
+       (20) تهيئة AudioContext — السلسلة الكاملة
+       ============================================================ */
     async function initAudioContext() {
         if (isAudioInitialized) return;
         try {
@@ -1581,6 +1733,8 @@
                 return filter;
             });
 
+            // source → gain → EQ chain → psychoBass → [reverb mix] →
+            // widener → crossfeed → balance → norm → limiter(or bypass) → analyser → dest
             source.connect(gainNode);
             let currentNode = gainNode;
             filters.forEach(f => { currentNode.connect(f); currentNode = f; });
@@ -1616,9 +1770,9 @@
             balanceOutput.connect(normGainNode);
 
             masterLimiter = initMasterLimiter();
+            // الاتصال الافتراضي: Safe mode
             normGainNode.connect(masterLimiter);
             masterLimiter.connect(analyser);
-
             analyser.connect(audioContext.destination);
 
             isAudioInitialized = true;
@@ -1627,6 +1781,8 @@
             applyWidener();
             applyChannelBalance();
             applyNormToCurrent();
+            // نطبق وضع الـ Limiter المحفوظ (أو Safe الافتراضي)
+            setLimiterMode(currentLimiterMode);
             startSpectrumLoop();
             startVisualizerLoop();
         } catch (e) {
@@ -1634,6 +1790,9 @@
         }
     }
 
+    /* ============================================================
+       (21) حلقات الرسم البصري
+       ============================================================ */
     function startSpectrumLoop() {
         if (!analyser || spectrumAnimId) return;
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -1690,6 +1849,9 @@
         if (visualizerAnimId) { cancelAnimationFrame(visualizerAnimId); visualizerAnimId = null; }
     }
 
+    /* ============================================================
+       (22) أزرار التحكم الأساسية
+       ============================================================ */
     playPauseBtn.onclick = async () => {
         if (!songs.length) { alert("أضف أغاني أولاً"); return; }
         if (!isAudioInitialized) await initAudioContext();
@@ -1765,6 +1927,9 @@
     nextBtn.onclick = () => { playNext(); };
     prevBtn.onclick = () => { playPrev(); };
 
+    /* ============================================================
+       (23) الشريط العلوي — Chips
+       ============================================================ */
     const boostChip = document.getElementById("boostChip");
     boostChip.onclick = () => {
         boostActive = !boostActive;
@@ -1823,6 +1988,9 @@
         palaceToggleChip.classList.toggle("palace-active", palaceEnabled);
     };
 
+    /* ============================================================
+       (24) Stereo Widener Handlers
+       ============================================================ */
     const stereoWidenerChip     = document.getElementById("stereoWidenerChip");
     const stereoWidenerControls = document.getElementById("stereoWidenerControls");
     const widenerSlider         = document.getElementById("widenerWidth");
@@ -1874,6 +2042,9 @@
         advancedToggleChip.classList.toggle("active-chip", advancedPanelVisible);
     };
 
+    /* ============================================================
+       (25) Channel Balance Handlers
+       ============================================================ */
     const balanceChip         = document.getElementById("balanceChip");
     const balanceControlsEl   = document.getElementById("balanceControls");
     const balanceSliderEl     = document.getElementById("balanceSlider");
@@ -1964,6 +2135,9 @@
     if (testLeftBtn)  testLeftBtn.onclick  = () => playBalanceTestTone("left");
     if (testRightBtn) testRightBtn.onclick = () => playBalanceTestTone("right");
 
+    /* ============================================================
+       (26) المودالات والقائمة الجانبية
+       ============================================================ */
     const infoChip = document.getElementById("infoChip");
     const infoModal = document.getElementById("infoModal");
     const closeInfoModalBtn = document.getElementById("closeInfoModal");
@@ -2043,6 +2217,9 @@
         reader.readAsDataURL(e.target.files[0]);
     });
 
+    /* ============================================================
+       (27) تأثيرات القصر
+       ============================================================ */
     document.getElementById("applyPalaceEffect").addEventListener("click", () => {
         const size = parseFloat(document.getElementById("palaceSize").value) / 100;
         if (wetGain && dryGain) {
@@ -2065,6 +2242,9 @@
         document.getElementById("palaceSizeValue").textContent = e.target.value + "%";
     });
 
+    /* ============================================================
+       (28) المعادل الرسومي
+       ============================================================ */
     function initGraphicEQ() {
         eqCanvas = document.getElementById("graphicEqCanvas");
         if (!eqCanvas) return;
@@ -2149,14 +2329,13 @@
         updateBassWarning(bassPercent);
     }
 
-    // === تحذير بصري لما الـ bass يعدي 80% ===
     function updateBassWarning(percent) {
         const span = document.getElementById("bassValue");
         if (!span) return;
         if (percent >= 80) {
             span.style.color = "#ff6666";
             span.style.fontWeight = "bold";
-            span.title = "⚠️ تشويه محتمل — حافظ على مستوى الصوت متوسط";
+            span.title = "⚠️ تشويه محتمل — استخدم وضع Raw للحصول على أقصى إحساس";
         } else {
             span.style.color = "";
             span.style.fontWeight = "";
@@ -2340,6 +2519,9 @@
         if (eqTooltip) eqTooltip.style.display = "none";
     }
 
+    /* ============================================================
+       (29) UI الإضافات الصوتية — Psycho-Bass + Crossfeed + Limiter
+       ============================================================ */
     let psychoBassSlider = null;
     let psychoBassValueDisplay = null;
     let crossoverSlider = null;
@@ -2382,10 +2564,6 @@
             <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;margin-top:2px;">
                 <span>60 Hz (عميق)</span><span>200 Hz (متحكم)</span>
             </div>
-            <div style="font-size:10px;color:#888;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border-radius:8px;">
-                💡 <b>للباس المميز</b>: Psycho-Bass=0% + Bass slider عالي<br>
-                🎧 <b>للباس النظيف</b>: Psycho-Bass=50%+ + Bass slider متوسط
-            </div>
         `;
         panel.appendChild(bassDiv);
 
@@ -2398,26 +2576,37 @@
         `;
         panel.appendChild(cfDiv);
 
-        // ---- Extreme Boost ----
-        const extremeDiv = document.createElement("div");
-        extremeDiv.style.cssText = "margin-top:14px;padding-top:12px;border-top:1px solid rgba(232,232,242,0.15);";
-        extremeDiv.innerHTML = `
-            <button id="extremeBoostBtn" style="
-                width:100%;padding:11px;border-radius:20px;cursor:pointer;
-                background:linear-gradient(135deg, #ff4444, #ff8800);
-                color:#fff;font-weight:bold;font-size:13px;
-                border:1px solid transparent;
-                box-shadow:0 4px 12px rgba(255,68,68,0.4);
-                transition:all 0.3s;
-                font-family:inherit;
-            ">💥 Extreme Boost</button>
-            <div style="font-size:10px;color:#B0B0C8;margin-top:6px;text-align:center;line-height:1.4;">
-                وضع التضخيم الأقصى — أقل حماية، صوت أعلى<br>
-                <span style="color:#ff9999;">⚠️ متاح فقط بعد تشغيل الأغنية</span>
-            </div>
+        // ---- Limiter Mode Selector (3 مستويات) ----
+        const limiterDiv = document.createElement("div");
+        limiterDiv.style.cssText = `
+            margin-top:16px;
+            padding-top:14px;
+            border-top:1px solid rgba(232,232,242,0.15);
         `;
-        panel.appendChild(extremeDiv);
+        limiterDiv.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-size:12px;color:#D0D0E0;font-weight:600;">🎚️ مستوى الحماية (Limiter)</span>
+                <span style="font-size:10px;color:#888;">اختصار: E</span>
+            </div>
+            <div style="display:flex;gap:6px;">
+                <button class="limiter-mode-btn" data-mode="safe" 
+                        style="flex:1;padding:9px 8px;border-radius:14px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;border:1px solid rgba(232,232,242,0.3);transition:all 0.25s;">
+                    🛡️ آمن
+                </button>
+                <button class="limiter-mode-btn" data-mode="medium" 
+                        style="flex:1;padding:9px 8px;border-radius:14px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;border:1px solid rgba(232,232,242,0.3);transition:all 0.25s;">
+                    ⚖️ متوسط
+                </button>
+                <button class="limiter-mode-btn" data-mode="raw" 
+                        style="flex:1;padding:9px 8px;border-radius:14px;cursor:pointer;font-size:11px;font-weight:bold;font-family:inherit;border:1px solid rgba(232,232,242,0.3);transition:all 0.25s;">
+                    💥 خام
+                </button>
+            </div>
+            <div id="limiterModeDesc" style="font-size:10px;color:#B0B0C8;text-align:center;margin-top:8px;line-height:1.4;min-height:16px;"></div>
+        `;
+        panel.appendChild(limiterDiv);
 
+        // ---- ربط العناصر ----
         psychoBassSlider = document.getElementById("psychoBassSlider");
         psychoBassValueDisplay = document.getElementById("psychoBassValue");
         crossoverSlider = document.getElementById("crossoverSlider");
@@ -2451,8 +2640,14 @@
             scheduleSave();
         });
 
-        document.getElementById("extremeBoostBtn").addEventListener("click", toggleExtremeBoost);
-        updateExtremeBoostButton();
+        // ---- أحداث أزرار الـ Limiter ----
+        document.querySelectorAll(".limiter-mode-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                setLimiterMode(btn.dataset.mode);
+            });
+        });
+
+        updateLimiterModeUI();
     }
 
     function updateNormToggleVisual() {
@@ -2470,6 +2665,9 @@
         }
     }
 
+    /* ============================================================
+       (30) الإعدادات — حفظ واستعادة
+       ============================================================ */
     function saveSettings() {
         try {
             const settings = {
@@ -2489,7 +2687,7 @@
                 psychoBassAmount,
                 psychoBassCrossover,
                 crossfeedAmount,
-                extremeBoostMode   // ← جديد
+                limiterMode: currentLimiterMode
             };
             localStorage.setItem("silverPlayerSettings_v3", JSON.stringify(settings));
         } catch (_) {}
@@ -2560,7 +2758,13 @@
             if (typeof s.psychoBassAmount === "number") psychoBassAmount = s.psychoBassAmount;
             if (typeof s.psychoBassCrossover === "number") psychoBassCrossover = s.psychoBassCrossover;
             if (typeof s.crossfeedAmount  === "number") crossfeedAmount  = s.crossfeedAmount;
-            if (typeof s.extremeBoostMode === "boolean") extremeBoostMode = s.extremeBoostMode;
+
+            // تحويل توافقي للوضع القديم extremeBoostMode → raw
+            if (typeof s.limiterMode === "string" && LIMITER_MODES[s.limiterMode]) {
+                currentLimiterMode = s.limiterMode;
+            } else if (s.extremeBoostMode === true) {
+                currentLimiterMode = "raw";
+            }
 
             if (normToggle) normToggle.checked = normEnabled;
             updateNormToggleVisual();
@@ -2580,7 +2784,7 @@
                 setPsychoBassAmount(psychoBassAmount);
                 setPsychoBassCrossover(psychoBassCrossover);
                 setCrossfeedAmount(crossfeedAmount);
-                if (masterLimiter) setLimiterMode(extremeBoostMode);
+                setLimiterMode(currentLimiterMode);
             }
 
             applyBoostSettings();
@@ -2589,6 +2793,9 @@
         }
     }
 
+    /* ============================================================
+       (31) شرائط التحكم الأصلية
+       ============================================================ */
     document.getElementById("reverb").oninput = e => {
         reverbSliderValue = parseFloat(e.target.value) / 100;
         document.getElementById("reverbValue").textContent = e.target.value + "%";
@@ -2627,6 +2834,9 @@
         scheduleSave();
     };
 
+    /* ============================================================
+       (32) اختصارات لوحة المفاتيح
+       ============================================================ */
     document.addEventListener("keydown", e => {
         const tag = (e.target.tagName || "").toUpperCase();
         if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -2655,10 +2865,13 @@
             case "h": case "H": advancedToggleChip.click(); break;
             case "w": case "W": if (stereoWidenerChip) stereoWidenerChip.click(); break;
             case "l": case "L": if (balanceChip)       balanceChip.click();       break;
-            case "e": case "E": toggleExtremeBoost(); break;
+            case "e": case "E": cycleLimiterMode(); break;
         }
     });
 
+    /* ============================================================
+       (33) السحب والإفلات على الصفحة
+       ============================================================ */
     let dragCounter = 0;
     document.addEventListener("dragenter", e => {
         e.preventDefault();
@@ -2702,6 +2915,9 @@
         }
     });
 
+    /* ============================================================
+       (34) قبل الإغلاق — تنظيف ObjectURLs
+       ============================================================ */
     window.addEventListener("beforeunload", () => {
         try {
             allObjectURLs.forEach(u => { try { URL.revokeObjectURL(u); } catch (_) {} });
@@ -2709,6 +2925,9 @@
         } catch (_) {}
     });
 
+    /* ============================================================
+       (35) النجوم
+       ============================================================ */
     function createStars() {
         const container = document.getElementById("starsBackground");
         if (!container) return;
@@ -2727,6 +2946,9 @@
         container.appendChild(frag);
     }
 
+    /* ============================================================
+       (36) التهيئة النهائية
+       ============================================================ */
     function init() {
         switchUIMode();
         enableSlow3D(false);
@@ -2761,7 +2983,7 @@
         }
         updateBalanceStatus();
         updateNormToggleVisual();
-        updateExtremeBoostButton();
+        updateLimiterModeUI();
     }
 
     if (document.readyState === "loading") {
