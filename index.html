@@ -32,6 +32,7 @@
             <button class="quick-action-chip" id="palaceToggleChip" title="معالج القصر">🏰</button>
             <button class="quick-action-chip" id="stereoWidenerChip" title="توسيع الستيريو">🌐</button>
             <button class="quick-action-chip" id="balanceChip" title="توازن السماعات">⚖️</button>
+            <button class="quick-action-chip" id="haasChip" title="ستيريو قسري (Haas Effect)">🎭</button>
             <button class="quick-action-chip" id="boostChip" title="تضخيم">⚡</button>
             <button class="quick-action-chip" id="powerSaveChip" title="توفير الطاقة">🔋</button>
             <button class="quick-action-chip" id="advancedToggleChip" title="لوحة التحكم">🎛️</button>
@@ -43,6 +44,7 @@
     <div class="burger-dropdown" id="burgerDropdown">
         <div class="dropdown-item" data-action="widener">🌐 توسيع الستيريو</div>
         <div class="dropdown-item" data-action="balance">⚖️ توازن السماعات</div>
+        <div class="dropdown-item" data-action="haas">🎭 ستيريو قسري (Haas)</div>
         <div class="dropdown-item" data-action="camera">🎥 دوران الكاميرا</div>
         <div class="dropdown-item" data-action="palace">🏰 معالج القصر</div>
         <div class="dropdown-item" data-action="boost">⚡ تضخيم</div>
@@ -72,6 +74,8 @@
             <div class="shortcut-item"><span>القصر الصوتي</span><span class="shortcut-key">T</span></div>
             <div class="shortcut-item"><span>توسيع الستيريو</span><span class="shortcut-key">W</span></div>
             <div class="shortcut-item"><span>توازن السماعات</span><span class="shortcut-key">L</span></div>
+            <div class="shortcut-item"><span>ستيريو قسري (Haas)</span><span class="shortcut-key">D</span></div>
+            <div class="shortcut-item"><span>مستوى الحماية (Limiter)</span><span class="shortcut-key">E</span></div>
             <div class="shortcut-item"><span>إظهار/إخفاء اللوحة</span><span class="shortcut-key">H</span></div>
             <div class="shortcut-item"><span>👆 إيماءة: السحب لليسار</span><span class="shortcut-key">الأغنية التالية</span></div>
             <div class="shortcut-item"><span>👆 إيماءة: السحب لليمين</span><span class="shortcut-key">الأغنية السابقة</span></div>
@@ -98,6 +102,12 @@
 
             <div class="info-section-title">⚖️ توازن السماعات</div>
             <div class="info-item"><span>تحكم فردي لكل قناة (L/R) + توازن عام + تبديل — مثالي للأجهزة متعددة السماعات.</span><span class="info-badge">مفتاح L</span></div>
+
+            <div class="info-section-title">🎭 ستيريو قسري (Haas Effect)</div>
+            <div class="info-item"><span>تأخير مستقل لكل قناة (0-30ms) + جاف/مؤجل + عكس طور + فلتر LPF — يجبر الدماغ على إدراك اتساع ستيريو حتى مع سماعات رخيصة أو بيضاوية غير متطابقة.</span><span class="info-badge">مفتاح D</span></div>
+
+            <div class="info-section-title">🎚️ مستوى الحماية (Limiter)</div>
+            <div class="info-item"><span>3 أوضاع: آمن 🛡️ (حماية كاملة) | متوسط ⚖️ (توازن) | خام 💥 (أقصى تضخيم بدون حماية).</span><span class="info-badge">مفتاح E</span></div>
 
             <div class="info-section-title">👆 إيماءات اللمس</div>
             <div class="info-item"><span>اسحب لليسار على المشغل = الأغنية التالية | اسحب لليمين = الأغنية السابقة.</span><span class="info-badge">سحب</span></div>
@@ -294,6 +304,72 @@
                         <button class="palace-btn" id="testRightBtn">🔊 اختبار يمين</button>
                     </div>
                     <div id="balanceStatus" style="font-size:11px;color:#C0C0E0;margin-top:8px;"></div>
+                </div>
+
+                <!-- ========== ستيريو قسري (Haas Effect) — تحكم دقيق ========== -->
+                <div class="haas-controls" id="haasControls" style="display:none;">
+                    <h4>🎭 ستيريو قسري (Haas Effect)</h4>
+                    <div style="font-size:11px;color:#B0B0C0;margin-bottom:10px;">
+                        ✨ تحكم مستقل لكل قناة — تأخير + جاف/مؤجل + عكس طور + فلتر — مثالي للسماعات البيضاوية الرخيصة وغير المتطابقة
+                    </div>
+
+                    <!-- Presets -->
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+                        <button class="palace-btn haas-preset" data-preset="haasR" style="flex:1;font-size:11px;">🎭 يمين 18ms</button>
+                        <button class="palace-btn haas-preset" data-preset="haasL" style="flex:1;font-size:11px;">🎭 يسار 18ms</button>
+                        <button class="palace-btn haas-preset" data-preset="sym" style="flex:1;font-size:11px;">↔️ متماثل</button>
+                    </div>
+
+                    <!-- Left Channel -->
+                    <div style="background:rgba(232,232,242,0.05);padding:10px;border-radius:12px;margin-bottom:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <span style="font-weight:bold;color:#E8E8F2;font-size:12px;">◀ اليسار</span>
+                            <button class="palace-btn haas-inv-btn" id="haasInvL" style="padding:3px 10px;font-size:10px;">🔄 عكس الطور</button>
+                        </div>
+                        <label style="font-size:10px;color:#B0B0C8;">تأخير: <span id="haasDelayLDisplay">0.0 ms</span></label>
+                        <input type="range" class="palace-slider" id="haasDelayL" min="0" max="30" value="0" step="0.1" style="margin-bottom:6px;">
+                        <div style="display:flex;gap:8px;">
+                            <div style="flex:1;">
+                                <label style="font-size:10px;color:#B0B0C8;">جاف: <span id="haasDryLDisplay">100%</span></label>
+                                <input type="range" class="palace-slider" id="haasDryL" min="0" max="100" value="100">
+                            </div>
+                            <div style="flex:1;">
+                                <label style="font-size:10px;color:#B0B0C8;">مؤجل: <span id="haasWetLDisplay">0%</span></label>
+                                <input type="range" class="palace-slider" id="haasWetL" min="0" max="100" value="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Channel -->
+                    <div style="background:rgba(232,232,242,0.05);padding:10px;border-radius:12px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <span style="font-weight:bold;color:#E8E8F2;font-size:12px;">اليمين ▶</span>
+                            <button class="palace-btn haas-inv-btn" id="haasInvR" style="padding:3px 10px;font-size:10px;">🔄 عكس الطور</button>
+                        </div>
+                        <label style="font-size:10px;color:#B0B0C8;">تأخير: <span id="haasDelayRDisplay">18.0 ms</span></label>
+                        <input type="range" class="palace-slider" id="haasDelayR" min="0" max="30" value="18" step="0.1" style="margin-bottom:6px;">
+                        <div style="display:flex;gap:8px;">
+                            <div style="flex:1;">
+                                <label style="font-size:10px;color:#B0B0C8;">جاف: <span id="haasDryRDisplay">0%</span></label>
+                                <input type="range" class="palace-slider" id="haasDryR" min="0" max="100" value="0">
+                            </div>
+                            <div style="flex:1;">
+                                <label style="font-size:10px;color:#B0B0C8;">مؤجل: <span id="haasWetRDisplay">100%</span></label>
+                                <input type="range" class="palace-slider" id="haasWetR" min="0" max="100" value="100">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LPF on delayed path -->
+                    <div style="margin-bottom:10px;">
+                        <label style="font-size:11px;color:#D0D0E0;">🎚️ فلتر تمرير منخفض على المسار المؤجل: <span id="haasLPFDisplay">12000 Hz</span></label>
+                        <input type="range" class="palace-slider" id="haasLPF" min="500" max="20000" value="12000" step="100">
+                        <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;margin-top:2px;">
+                            <span>500Hz (ناعم)</span><span>20kHz (بدون فلتر)</span>
+                        </div>
+                    </div>
+
+                    <div id="haasStatus" style="font-size:11px;color:#C0C0E0;margin-top:6px;"></div>
                 </div>
 
                 <!-- تضخيم الصوت -->
