@@ -1,6 +1,6 @@
 /* ============================================================
    المشغل الفضي الفاخر — style.css (نسخة كاملة موحّدة)
-   يحتوي على: كل الأنماط الأصلية + Channel Balance
+   يحتوي على: كل الأنماط الأصلية + Channel Balance + Haas Effect
    ============================================================ */
 
 /* ============================================================
@@ -979,7 +979,8 @@ canvas#waveformCanvas {
 .analysis-panel,
 .advanced-settings,
 .stereo-widener-controls,
-.balance-controls {
+.balance-controls,
+.haas-controls {
     background: rgba(20, 20, 28, 0.7);
     padding: 16px;
     border-radius: 20px;
@@ -1049,7 +1050,7 @@ canvas#waveformCanvas {
 }
 
 /* ============================================================
-   20) توازن السماعات (Channel Balance) — جديد
+   20) توازن السماعات (Channel Balance)
    ============================================================ */
 .balance-controls h4 {
     margin-bottom: 8px;
@@ -1098,6 +1099,81 @@ canvas#waveformCanvas {
     font-size: 11px;
     color: #C0C0E0;
     margin-top: 8px;
+}
+
+/* ============================================================
+   20b) ستيريو قسري — Haas Effect
+   ============================================================ */
+.haas-controls h4 {
+    margin-bottom: 8px;
+    color: #E8E8F2;
+    font-size: 15px;
+    text-shadow: 0 0 10px rgba(220, 220, 255, 0.5);
+}
+
+.haas-controls label {
+    display: block;
+    font-size: 12px;
+    color: #D0D0E0;
+    margin-bottom: 4px;
+}
+
+.haas-controls input[type="range"] {
+    width: 100%;
+    height: 8px;
+    background: linear-gradient(90deg, #A0A0B8, #E8E8F2);
+    border-radius: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+    outline: none;
+    cursor: pointer;
+}
+
+.haas-controls input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 2px solid #2A2A38;
+    box-shadow: 0 0 10px rgba(232, 232, 242, 0.6);
+    cursor: pointer;
+}
+
+.haas-controls input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 2px solid #2A2A38;
+    cursor: pointer;
+}
+
+#haasStatus {
+    font-size: 11px;
+    color: #C0C0E0;
+    margin-top: 8px;
+    line-height: 1.5;
+}
+
+/* Preset buttons داخل Haas */
+.haas-preset {
+    font-size: 11px !important;
+    padding: 6px 10px !important;
+}
+
+/* زر عكس الطور — حالة نشطة */
+.haas-inv-btn {
+    font-size: 10px !important;
+    padding: 3px 10px !important;
+    transition: all 0.25s;
+}
+
+/* الفاصل بين قنوات Haas */
+.haas-controls > div[style*="background:rgba(232,232,242,0.05)"] {
+    transition: background 0.25s;
+}
+
+.haas-controls > div[style*="background:rgba(232,232,242,0.05)"]:hover {
+    background: rgba(232, 232, 242, 0.08) !important;
 }
 
 /* ============================================================
