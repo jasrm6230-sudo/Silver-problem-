@@ -1,8 +1,9 @@
 /* ============================================================
-   المشغل الفضي الفاخر — script.js (v3.3)
+   المشغل الفضي الفاخر — script.js (v3.4)
    Media Session + إيماءات + قائمة + Stereo Widener
-   + Channel Balance + Graphic EQ + Master Limiter (3 modes)
-   + Loudness Normalization + Psychoacoustic Bass + Crossfeed
+   + Channel Balance + Haas Effect (Precise) + Graphic EQ
+   + Master Limiter (3 modes) + Loudness Normalization
+   + Psychoacoustic Bass + Crossfeed
    ============================================================ */
 (function () {
     "use strict";
@@ -241,6 +242,28 @@
     let balanceRightTrim = 1.0;
     let balanceEnabled = false;
     let balanceSwapped = false;
+
+    // === Haas Effect — Precise Per-Channel ===
+    let haasEnabled = false;
+    const haasState = {
+        delayL: 0,     // 0-30 ms
+        delayR: 18,    // 0-30 ms
+        dryL: 1.0,     // 0-1
+        dryR: 0.0,
+        wetL: 0.0,
+        wetR: 1.0,
+        invertL: false,
+        invertR: false,
+        lpf: 12000     // Hz
+    };
+
+    let haasInput = null, haasOutput = null;
+    let haasSplitter = null, haasMerger = null;
+    let haasDryL_g = null, haasWetL_g = null, haasDelayL_n = null;
+    let haasDryR_g = null, haasWetR_g = null, haasDelayR_n = null;
+    let haasSumL = null, haasSumR = null;
+    let haasPhaseL = null, haasPhaseR = null;
+    let haasLPF_L = null, haasLPF_R = null;
 
     // === Master Limiter (3 modes) ===
     let masterLimiter = null;
@@ -1460,12 +1483,139 @@
     }
 
     /* ============================================================
-       (17) Master Limiter — 3 مستويات احترافية
+       (17) Haas Effect — ستيريو قسري (تحكم دقيق مستقل لكل قناة)
+       البنية:
+       input → splitter
+          L: [dry_L → sum_L] + [delayL → wet_L → lpf → sum_L] → phase_L(±1) → merger[0]
+          R: [dry_R → sum_R] + [delayR → wet_R → lpf → sum_R] → phase_R(±1) → merger[1]
+       merger → output
        ============================================================ */
+    function initHaasEffect() {
+        haasInput    = audioContext.createGain();
+        haasOutput   = audioContext.createGain();
+        haasSplitter = audioContext.createChannelSplitter(2);
+        haasMerger   = audioContext.createChannelMerger(2);
 
-    /**
-     * ينشئ عقدة الـ Limiter (DynamicsCompressor) بالإعدادات الافتراضية (Safe).
-     */
+        // --- Left ---
+        haasDryL_g = audioContext.createGain();
+        haasDryL_g.gain.value = haasState.dryL;
+        haasWetL_g = audioContext.createGain();
+        haasWetL_g.gain.value = haasState.wetL;
+        haasDelayL_n = audioContext.createDelay(0.1);
+        haasDelayL_n.delayTime.value = haasState.delayL / 1000;
+        haasLPF_L = audioContext.createBiquadFilter();
+        haasLPF_L.type = "lowpass";
+        haasLPF_L.frequency.value = haasState.lpf;
+        haasLPF_L.Q.value = 0.7;
+        haasSumL = audioContext.createGain();
+        haasPhaseL = audioContext.createGain();
+        haasPhaseL.gain.value = haasState.invertL ? -1 : 1;
+
+        // --- Right ---
+        haasDryR_g = audioContext.createGain();
+        haasDryR_g.gain.value = haasState.dryR;
+        haasWetR_g = audioContext.createGain();
+        haasWetR_g.gain.value = haasState.wetR;
+        haasDelayR_n = audioContext.createDelay(0.1);
+        haasDelayR_n.delayTime.value = haasState.delayR / 1000;
+        haasLPF_R = audioContext.createBiquadFilter();
+        haasLPF_R.type = "lowpass";
+        haasLPF_R.frequency.value = haasState.lpf;
+        haasLPF_R.Q.value = 0.7;
+        haasSumR = audioContext.createGain();
+        haasPhaseR = audioContext.createGain();
+        haasPhaseR.gain.value = haasState.invertR ? -1 : 1;
+
+        // --- Routing ---
+        haasInput.connect(haasSplitter);
+
+        // L path
+        haasSplitter.connect(haasDryL_g, 0);
+        haasDryL_g.connect(haasSumL);
+        haasSplitter.connect(haasDelayL_n, 0);
+        haasDelayL_n.connect(haasWetL_g);
+        haasWetL_g.connect(haasLPF_L);
+        haasLPF_L.connect(haasSumL);
+        haasSumL.connect(haasPhaseL);
+        haasPhaseL.connect(haasMerger, 0, 0);
+
+        // R path
+        haasSplitter.connect(haasDryR_g, 1);
+        haasDryR_g.connect(haasSumR);
+        haasSplitter.connect(haasDelayR_n, 1);
+        haasDelayR_n.connect(haasWetR_g);
+        haasWetR_g.connect(haasLPF_R);
+        haasLPF_R.connect(haasSumR);
+        haasSumR.connect(haasPhaseR);
+        haasPhaseR.connect(haasMerger, 0, 1);
+
+        haasMerger.connect(haasOutput);
+
+        applyHaasState();
+    }
+
+    function applyHaasState() {
+        if (!haasDryL_g || !audioContext) return;
+        const now = audioContext.currentTime;
+        const t = 0.03;
+        const s = haasState;
+
+        if (!haasEnabled) {
+            haasDryL_g.gain.setTargetAtTime(1, now, t);
+            haasDryR_g.gain.setTargetAtTime(1, now, t);
+            haasWetL_g.gain.setTargetAtTime(0, now, t);
+            haasWetR_g.gain.setTargetAtTime(0, now, t);
+            haasPhaseL.gain.setTargetAtTime(1, now, t);
+            haasPhaseR.gain.setTargetAtTime(1, now, t);
+            return;
+        }
+
+        haasDryL_g.gain.setTargetAtTime(s.dryL, now, t);
+        haasDryR_g.gain.setTargetAtTime(s.dryR, now, t);
+        haasWetL_g.gain.setTargetAtTime(s.wetL, now, t);
+        haasWetR_g.gain.setTargetAtTime(s.wetR, now, t);
+        haasDelayL_n.delayTime.setTargetAtTime(s.delayL / 1000, now, t);
+        haasDelayR_n.delayTime.setTargetAtTime(s.delayR / 1000, now, t);
+        haasLPF_L.frequency.setTargetAtTime(s.lpf, now, t);
+        haasLPF_R.frequency.setTargetAtTime(s.lpf, now, t);
+        haasPhaseL.gain.setTargetAtTime(s.invertL ? -1 : 1, now, t);
+        haasPhaseR.gain.setTargetAtTime(s.invertR ? -1 : 1, now, t);
+
+        updateHaasUI();
+        scheduleSave();
+    }
+
+    function applyHaasPreset(name) {
+        if (name === "haasR") {
+            Object.assign(haasState, {
+                delayL: 0, delayR: 18,
+                dryL: 1.0, dryR: 0.0,
+                wetL: 0.0, wetR: 1.0,
+                invertL: false, invertR: false
+            });
+        } else if (name === "haasL") {
+            Object.assign(haasState, {
+                delayL: 18, delayR: 0,
+                dryL: 0.0, dryR: 1.0,
+                wetL: 1.0, wetR: 0.0,
+                invertL: false, invertR: false
+            });
+        } else if (name === "sym") {
+            Object.assign(haasState, {
+                delayL: 8, delayR: 14,
+                dryL: 0.7, dryR: 0.7,
+                wetL: 0.5, wetR: 0.5,
+                invertL: false, invertR: false
+            });
+        }
+        applyHaasState();
+        syncHaasSliders();
+        showToast("✨ تم تطبيق preset: " + name);
+    }
+
+    /* ============================================================
+       (18) Master Limiter — 3 مستويات احترافية
+       ============================================================ */
     function initMasterLimiter() {
         const limiter = audioContext.createDynamicsCompressor();
         const cfg = LIMITER_MODES.safe.config;
@@ -1477,16 +1627,6 @@
         return limiter;
     }
 
-    /**
-     * يبدّل بين مستويات الـ Limiter الثلاثة.
-     * - safe / medium: يمر الصوت عبر الـ DynamicsCompressor بإعدادات مختلفة.
-     * - raw: يتخطى الـ Limiter تماماً (bypass).
-     *
-     * الطريقة الآمنة للتبديل:
-     * 1. نفصل normGainNode من كل شيء.
-     * 2. نفصل masterLimiter من الـ analyser (لمنع أي تسريب).
-     * 3. نعيد التوصيل حسب الوضع الجديد.
-     */
     function setLimiterMode(mode) {
         if (!LIMITER_MODES[mode]) mode = "safe";
 
@@ -1494,7 +1634,6 @@
         const previousMode = currentLimiterMode;
         currentLimiterMode = mode;
 
-        // لا يمكن تطبيق التغييرات على الـ audio graph قبل التهيئة
         if (!audioContext || !masterLimiter || !normGainNode || !analyser) {
             updateLimiterModeUI();
             scheduleSave();
@@ -1503,18 +1642,12 @@
 
         const now = audioContext.currentTime;
 
-        // 1. نفصل عقدة الـ normalization من كل مكان
         try { normGainNode.disconnect(); } catch (_) {}
-
-        // 2. نفصل الـ limiter من الـ analyser
         try { masterLimiter.disconnect(); } catch (_) {}
 
-        // 3. نعيد التوصيل حسب الوضع
         if (modeInfo.bypass) {
-            // 🚀 وضع Raw: توصيل مباشر — يتخطى الـ limiter
             normGainNode.connect(analyser);
         } else {
-            // 🛡️ وضع Safe/Medium: نطبق الإعدادات ونمر عبر الـ limiter
             const cfg = modeInfo.config;
             try {
                 masterLimiter.threshold.setTargetAtTime(cfg.threshold, now, 0.05);
@@ -1523,7 +1656,6 @@
                 masterLimiter.attack.setTargetAtTime(cfg.attack, now, 0.05);
                 masterLimiter.release.setTargetAtTime(cfg.release, now, 0.05);
             } catch (_) {
-                // fallback لو setTargetAtTime مش مدعوم
                 masterLimiter.threshold.value = cfg.threshold;
                 masterLimiter.knee.value      = cfg.knee;
                 masterLimiter.ratio.value     = cfg.ratio;
@@ -1538,24 +1670,17 @@
         updateLimiterModeUI();
         scheduleSave();
 
-        // نعطي إشعار للمستخدم لو الوضع اتغير فعلاً
         if (previousMode !== mode) {
             showToast(`${modeInfo.icon} الوضع: ${modeInfo.nameAr} — ${modeInfo.description}`);
         }
     }
 
-    /**
-     * ينتقل للوضع التالي في الترتيب: Safe → Medium → Raw → Safe
-     */
     function cycleLimiterMode() {
         const idx = LIMITER_ORDER.indexOf(currentLimiterMode);
         const nextMode = LIMITER_ORDER[(idx + 1) % LIMITER_ORDER.length];
         setLimiterMode(nextMode);
     }
 
-    /**
-     * يحدّث حالة أزرار الـ Limiter الثلاثة في الواجهة.
-     */
     function updateLimiterModeUI() {
         const buttons = document.querySelectorAll(".limiter-mode-btn");
         if (!buttons.length) return;
@@ -1563,7 +1688,6 @@
         buttons.forEach(btn => {
             const mode = btn.dataset.mode;
             const isActive = mode === currentLimiterMode;
-            const modeInfo = LIMITER_MODES[mode];
 
             if (isActive) {
                 btn.style.background = "linear-gradient(145deg, #E8E8F2, #FFFFFF)";
@@ -1581,7 +1705,6 @@
             btn.style.opacity = isActive ? "1" : "0.7";
         });
 
-        // تحديث الوصف
         const desc = document.getElementById("limiterModeDesc");
         if (desc) {
             const modeInfo = LIMITER_MODES[currentLimiterMode];
@@ -1591,7 +1714,7 @@
     }
 
     /* ============================================================
-       (18) Psychoacoustic Bass
+       (19) Psychoacoustic Bass
        ============================================================ */
     function initPsychoBass() {
         psychoBassInput  = audioContext.createGain();
@@ -1656,7 +1779,7 @@
     }
 
     /* ============================================================
-       (19) Crossfeed — Bauer-style
+       (20) Crossfeed — Bauer-style
        ============================================================ */
     function initCrossfeed() {
         crossfeedInput  = audioContext.createGain();
@@ -1706,7 +1829,7 @@
     }
 
     /* ============================================================
-       (20) تهيئة AudioContext — السلسلة الكاملة
+       (21) تهيئة AudioContext — السلسلة الكاملة
        ============================================================ */
     async function initAudioContext() {
         if (isAudioInitialized) return;
@@ -1734,7 +1857,7 @@
             });
 
             // source → gain → EQ chain → psychoBass → [reverb mix] →
-            // widener → crossfeed → balance → norm → limiter(or bypass) → analyser → dest
+            // widener → crossfeed → balance → haas → norm → limiter(or bypass) → analyser → dest
             source.connect(gainNode);
             let currentNode = gainNode;
             filters.forEach(f => { currentNode.connect(f); currentNode = f; });
@@ -1765,12 +1888,15 @@
             initChannelBalance();
             crossfeedOutput.connect(balanceSplitter);
 
+            // 🎭 Haas Effect — يوضع بين balance و norm
+            initHaasEffect();
+            balanceOutput.connect(haasInput);
+
             normGainNode = audioContext.createGain();
             normGainNode.gain.value = 1;
-            balanceOutput.connect(normGainNode);
+            haasOutput.connect(normGainNode);
 
             masterLimiter = initMasterLimiter();
-            // الاتصال الافتراضي: Safe mode
             normGainNode.connect(masterLimiter);
             masterLimiter.connect(analyser);
             analyser.connect(audioContext.destination);
@@ -1780,8 +1906,8 @@
             loadSettings();
             applyWidener();
             applyChannelBalance();
+            syncHaasSliders();
             applyNormToCurrent();
-            // نطبق وضع الـ Limiter المحفوظ (أو Safe الافتراضي)
             setLimiterMode(currentLimiterMode);
             startSpectrumLoop();
             startVisualizerLoop();
@@ -1791,7 +1917,7 @@
     }
 
     /* ============================================================
-       (21) حلقات الرسم البصري
+       (22) حلقات الرسم البصري
        ============================================================ */
     function startSpectrumLoop() {
         if (!analyser || spectrumAnimId) return;
@@ -1850,7 +1976,7 @@
     }
 
     /* ============================================================
-       (22) أزرار التحكم الأساسية
+       (23) أزرار التحكم الأساسية
        ============================================================ */
     playPauseBtn.onclick = async () => {
         if (!songs.length) { alert("أضف أغاني أولاً"); return; }
@@ -1928,7 +2054,7 @@
     prevBtn.onclick = () => { playPrev(); };
 
     /* ============================================================
-       (23) الشريط العلوي — Chips
+       (24) الشريط العلوي — Chips
        ============================================================ */
     const boostChip = document.getElementById("boostChip");
     boostChip.onclick = () => {
@@ -1989,7 +2115,7 @@
     };
 
     /* ============================================================
-       (24) Stereo Widener Handlers
+       (25) Stereo Widener Handlers
        ============================================================ */
     const stereoWidenerChip     = document.getElementById("stereoWidenerChip");
     const stereoWidenerControls = document.getElementById("stereoWidenerControls");
@@ -2043,7 +2169,7 @@
     };
 
     /* ============================================================
-       (25) Channel Balance Handlers
+       (26) Channel Balance Handlers
        ============================================================ */
     const balanceChip         = document.getElementById("balanceChip");
     const balanceControlsEl   = document.getElementById("balanceControls");
@@ -2136,7 +2262,110 @@
     if (testRightBtn) testRightBtn.onclick = () => playBalanceTestTone("right");
 
     /* ============================================================
-       (26) المودالات والقائمة الجانبية
+       (27) Haas Effect Handlers — Precise
+       ============================================================ */
+    const haasChip       = document.getElementById("haasChip");
+    const haasControlsEl = document.getElementById("haasControls");
+    const haasStatusEl   = document.getElementById("haasStatus");
+
+    function updateHaasUI() {
+        const invL = document.getElementById("haasInvL");
+        const invR = document.getElementById("haasInvR");
+        if (invL) {
+            invL.style.background = haasState.invertL ? "linear-gradient(145deg, #FF8A8A, #FFAAAA)" : "";
+            invL.style.color = haasState.invertL ? "#0A0A0D" : "";
+        }
+        if (invR) {
+            invR.style.background = haasState.invertR ? "linear-gradient(145deg, #FF8A8A, #FFAAAA)" : "";
+            invR.style.color = haasState.invertR ? "#0A0A0D" : "";
+        }
+        if (haasStatusEl) {
+            if (!haasEnabled) {
+                haasStatusEl.textContent = "🎭 Haas متوقف — الصوت أصلي";
+            } else {
+                haasStatusEl.textContent =
+                    "🎭 نشط | L: " + haasState.delayL.toFixed(1) + "ms (جاف " + Math.round(haasState.dryL * 100) + "% | مؤجل " + Math.round(haasState.wetL * 100) + "%) | " +
+                    "R: " + haasState.delayR.toFixed(1) + "ms (جاف " + Math.round(haasState.dryR * 100) + "% | مؤجل " + Math.round(haasState.wetR * 100) + "%)";
+            }
+        }
+    }
+
+    function syncHaasSliders() {
+        const s = haasState;
+        const set = (id, val, dispId, dispVal) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+            const d = document.getElementById(dispId);
+            if (d) d.textContent = dispVal;
+        };
+        set("haasDelayL", s.delayL, "haasDelayLDisplay", s.delayL.toFixed(1) + " ms");
+        set("haasDelayR", s.delayR, "haasDelayRDisplay", s.delayR.toFixed(1) + " ms");
+        set("haasDryL", Math.round(s.dryL * 100), "haasDryLDisplay", Math.round(s.dryL * 100) + "%");
+        set("haasDryR", Math.round(s.dryR * 100), "haasDryRDisplay", Math.round(s.dryR * 100) + "%");
+        set("haasWetL", Math.round(s.wetL * 100), "haasWetLDisplay", Math.round(s.wetL * 100) + "%");
+        set("haasWetR", Math.round(s.wetR * 100), "haasWetRDisplay", Math.round(s.wetR * 100) + "%");
+        set("haasLPF", s.lpf, "haasLPFDisplay", s.lpf + " Hz");
+        updateHaasUI();
+    }
+
+    if (haasChip) {
+        haasChip.onclick = () => {
+            haasEnabled = !haasEnabled;
+            haasChip.classList.toggle("active-chip", haasEnabled);
+            if (haasControlsEl) haasControlsEl.style.display = haasEnabled ? "block" : "none";
+            applyHaasState();
+            scheduleSave();
+        };
+    }
+
+    const haasSliderBindings = [
+        { id: "haasDelayL", disp: "haasDelayLDisplay", fmt: v => v.toFixed(1) + " ms",
+          apply: v => { haasState.delayL = v; } },
+        { id: "haasDelayR", disp: "haasDelayRDisplay", fmt: v => v.toFixed(1) + " ms",
+          apply: v => { haasState.delayR = v; } },
+        { id: "haasDryL", disp: "haasDryLDisplay", fmt: v => v + "%",
+          apply: v => { haasState.dryL = v / 100; } },
+        { id: "haasDryR", disp: "haasDryRDisplay", fmt: v => v + "%",
+          apply: v => { haasState.dryR = v / 100; } },
+        { id: "haasWetL", disp: "haasWetLDisplay", fmt: v => v + "%",
+          apply: v => { haasState.wetL = v / 100; } },
+        { id: "haasWetR", disp: "haasWetRDisplay", fmt: v => v + "%",
+          apply: v => { haasState.wetR = v / 100; } },
+        { id: "haasLPF", disp: "haasLPFDisplay", fmt: v => v + " Hz",
+          apply: v => { haasState.lpf = v; } }
+    ];
+
+    haasSliderBindings.forEach(b => {
+        const el = document.getElementById(b.id);
+        if (!el) return;
+        el.addEventListener("input", e => {
+            const v = parseFloat(e.target.value);
+            b.apply(v);
+            const d = document.getElementById(b.disp);
+            if (d) d.textContent = b.fmt(v);
+            applyHaasState();
+        });
+    });
+
+    const invLBtn = document.getElementById("haasInvL");
+    const invRBtn = document.getElementById("haasInvR");
+    if (invLBtn) invLBtn.onclick = () => {
+        haasState.invertL = !haasState.invertL;
+        applyHaasState();
+        showToast(haasState.invertL ? "🔄 عكس طور اليسار" : "↺ طور اليسار طبيعي");
+    };
+    if (invRBtn) invRBtn.onclick = () => {
+        haasState.invertR = !haasState.invertR;
+        applyHaasState();
+        showToast(haasState.invertR ? "🔄 عكس طور اليمين" : "↺ طور اليمين طبيعي");
+    };
+
+    document.querySelectorAll(".haas-preset").forEach(btn => {
+        btn.onclick = () => applyHaasPreset(btn.dataset.preset);
+    });
+
+    /* ============================================================
+       (28) المودالات والقائمة الجانبية
        ============================================================ */
     const infoChip = document.getElementById("infoChip");
     const infoModal = document.getElementById("infoModal");
@@ -2188,6 +2417,7 @@
             else if (action === "shortcuts") shortcutsFab.click();
             else if (action === "widener" && stereoWidenerChip) stereoWidenerChip.click();
             else if (action === "balance" && balanceChip)       balanceChip.click();
+            else if (action === "haas" && haasChip)             haasChip.click();
         });
     });
 
@@ -2218,7 +2448,7 @@
     });
 
     /* ============================================================
-       (27) تأثيرات القصر
+       (29) تأثيرات القصر
        ============================================================ */
     document.getElementById("applyPalaceEffect").addEventListener("click", () => {
         const size = parseFloat(document.getElementById("palaceSize").value) / 100;
@@ -2243,7 +2473,7 @@
     });
 
     /* ============================================================
-       (28) المعادل الرسومي
+       (30) المعادل الرسومي
        ============================================================ */
     function initGraphicEQ() {
         eqCanvas = document.getElementById("graphicEqCanvas");
@@ -2520,7 +2750,7 @@
     }
 
     /* ============================================================
-       (29) UI الإضافات الصوتية — Psycho-Bass + Crossfeed + Limiter
+       (31) UI الإضافات الصوتية — Psycho-Bass + Crossfeed + Limiter
        ============================================================ */
     let psychoBassSlider = null;
     let psychoBassValueDisplay = null;
@@ -2534,7 +2764,6 @@
         const panel = document.querySelector(".audio-enhancement-controls");
         if (!panel || document.getElementById("normToggle")) return;
 
-        // ---- Loudness Normalization ----
         const normDiv = document.createElement("div");
         normDiv.style.cssText = "margin-top:14px;padding-top:12px;border-top:1px solid rgba(232,232,242,0.15);";
         normDiv.innerHTML = `
@@ -2550,7 +2779,6 @@
         `;
         panel.appendChild(normDiv);
 
-        // ---- Psycho-Bass + Crossover ----
         const bassDiv = document.createElement("div");
         bassDiv.style.cssText = "margin-top:14px;";
         bassDiv.innerHTML = `
@@ -2567,7 +2795,6 @@
         `;
         panel.appendChild(bassDiv);
 
-        // ---- Crossfeed ----
         const cfDiv = document.createElement("div");
         cfDiv.style.cssText = "margin-top:14px;";
         cfDiv.innerHTML = `
@@ -2576,7 +2803,6 @@
         `;
         panel.appendChild(cfDiv);
 
-        // ---- Limiter Mode Selector (3 مستويات) ----
         const limiterDiv = document.createElement("div");
         limiterDiv.style.cssText = `
             margin-top:16px;
@@ -2606,7 +2832,6 @@
         `;
         panel.appendChild(limiterDiv);
 
-        // ---- ربط العناصر ----
         psychoBassSlider = document.getElementById("psychoBassSlider");
         psychoBassValueDisplay = document.getElementById("psychoBassValue");
         crossoverSlider = document.getElementById("crossoverSlider");
@@ -2640,7 +2865,6 @@
             scheduleSave();
         });
 
-        // ---- أحداث أزرار الـ Limiter ----
         document.querySelectorAll(".limiter-mode-btn").forEach(btn => {
             btn.addEventListener("click", () => {
                 setLimiterMode(btn.dataset.mode);
@@ -2666,7 +2890,7 @@
     }
 
     /* ============================================================
-       (30) الإعدادات — حفظ واستعادة
+       (32) الإعدادات — حفظ واستعادة
        ============================================================ */
     function saveSettings() {
         try {
@@ -2683,18 +2907,31 @@
                 balanceLeftTrim,
                 balanceRightTrim,
                 balanceSwapped,
+                haasEnabled,
+                haasState: {
+                    delayL: haasState.delayL,
+                    delayR: haasState.delayR,
+                    dryL: haasState.dryL,
+                    dryR: haasState.dryR,
+                    wetL: haasState.wetL,
+                    wetR: haasState.wetR,
+                    invertL: haasState.invertL,
+                    invertR: haasState.invertR,
+                    lpf: haasState.lpf
+                },
                 normEnabled,
                 psychoBassAmount,
                 psychoBassCrossover,
                 crossfeedAmount,
                 limiterMode: currentLimiterMode
             };
-            localStorage.setItem("silverPlayerSettings_v3", JSON.stringify(settings));
+            localStorage.setItem("silverPlayerSettings_v4", JSON.stringify(settings));
         } catch (_) {}
     }
 
     function loadSettings() {
-        const saved = localStorage.getItem("silverPlayerSettings_v3")
+        const saved = localStorage.getItem("silverPlayerSettings_v4")
+                   || localStorage.getItem("silverPlayerSettings_v3")
                    || localStorage.getItem("silverPlayerSettings_v2");
         if (!saved) return;
         try {
@@ -2754,12 +2991,29 @@
             if (balanceControlsEl)   balanceControlsEl.style.display = balanceEnabled ? "block" : "none";
             updateBalanceStatus();
 
+            // === Haas Effect restore ===
+            if (typeof s.haasEnabled === "boolean") haasEnabled = s.haasEnabled;
+            if (s.haasState && typeof s.haasState === "object") {
+                const st = s.haasState;
+                if (typeof st.delayL === "number")   haasState.delayL = st.delayL;
+                if (typeof st.delayR === "number")   haasState.delayR = st.delayR;
+                if (typeof st.dryL === "number")     haasState.dryL = st.dryL;
+                if (typeof st.dryR === "number")     haasState.dryR = st.dryR;
+                if (typeof st.wetL === "number")     haasState.wetL = st.wetL;
+                if (typeof st.wetR === "number")     haasState.wetR = st.wetR;
+                if (typeof st.invertL === "boolean") haasState.invertL = st.invertL;
+                if (typeof st.invertR === "boolean") haasState.invertR = st.invertR;
+                if (typeof st.lpf === "number")      haasState.lpf = st.lpf;
+            }
+            if (haasChip)         haasChip.classList.toggle("active-chip", haasEnabled);
+            if (haasControlsEl)   haasControlsEl.style.display = haasEnabled ? "block" : "none";
+            syncHaasSliders();
+
             if (typeof s.normEnabled === "boolean") normEnabled = s.normEnabled;
             if (typeof s.psychoBassAmount === "number") psychoBassAmount = s.psychoBassAmount;
             if (typeof s.psychoBassCrossover === "number") psychoBassCrossover = s.psychoBassCrossover;
             if (typeof s.crossfeedAmount  === "number") crossfeedAmount  = s.crossfeedAmount;
 
-            // تحويل توافقي للوضع القديم extremeBoostMode → raw
             if (typeof s.limiterMode === "string" && LIMITER_MODES[s.limiterMode]) {
                 currentLimiterMode = s.limiterMode;
             } else if (s.extremeBoostMode === true) {
@@ -2785,6 +3039,7 @@
                 setPsychoBassCrossover(psychoBassCrossover);
                 setCrossfeedAmount(crossfeedAmount);
                 setLimiterMode(currentLimiterMode);
+                applyHaasState();
             }
 
             applyBoostSettings();
@@ -2794,7 +3049,7 @@
     }
 
     /* ============================================================
-       (31) شرائط التحكم الأصلية
+       (33) شرائط التحكم الأصلية
        ============================================================ */
     document.getElementById("reverb").oninput = e => {
         reverbSliderValue = parseFloat(e.target.value) / 100;
@@ -2835,7 +3090,7 @@
     };
 
     /* ============================================================
-       (32) اختصارات لوحة المفاتيح
+       (34) اختصارات لوحة المفاتيح
        ============================================================ */
     document.addEventListener("keydown", e => {
         const tag = (e.target.tagName || "").toUpperCase();
@@ -2865,12 +3120,13 @@
             case "h": case "H": advancedToggleChip.click(); break;
             case "w": case "W": if (stereoWidenerChip) stereoWidenerChip.click(); break;
             case "l": case "L": if (balanceChip)       balanceChip.click();       break;
+            case "d": case "D": if (haasChip)          haasChip.click();          break;
             case "e": case "E": cycleLimiterMode(); break;
         }
     });
 
     /* ============================================================
-       (33) السحب والإفلات على الصفحة
+       (35) السحب والإفلات على الصفحة
        ============================================================ */
     let dragCounter = 0;
     document.addEventListener("dragenter", e => {
@@ -2916,7 +3172,7 @@
     });
 
     /* ============================================================
-       (34) قبل الإغلاق — تنظيف ObjectURLs
+       (36) قبل الإغلاق — تنظيف ObjectURLs
        ============================================================ */
     window.addEventListener("beforeunload", () => {
         try {
@@ -2926,7 +3182,7 @@
     });
 
     /* ============================================================
-       (35) النجوم
+       (37) النجوم
        ============================================================ */
     function createStars() {
         const container = document.getElementById("starsBackground");
@@ -2947,7 +3203,7 @@
     }
 
     /* ============================================================
-       (36) التهيئة النهائية
+       (38) التهيئة النهائية
        ============================================================ */
     function init() {
         switchUIMode();
@@ -2982,6 +3238,15 @@
             balanceControlsEl.style.display = balanceEnabled ? "block" : "none";
         }
         updateBalanceStatus();
+
+        if (haasChip) {
+            haasChip.classList.toggle("active-chip", haasEnabled);
+        }
+        if (haasControlsEl) {
+            haasControlsEl.style.display = haasEnabled ? "block" : "none";
+        }
+        syncHaasSliders();
+
         updateNormToggleVisual();
         updateLimiterModeUI();
     }
